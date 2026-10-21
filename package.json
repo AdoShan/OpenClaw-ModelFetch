@@ -25,7 +25,8 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "README.md"
+    "README.md",
+    "README-CN.md"
   ],
   "type": "module",
   "scripts": {
