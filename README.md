@@ -79,6 +79,30 @@ openclaw plugins doctor
 
 插件不自行绘制 OpenClaw 的应用侧边栏；页面和导航由 Control UI 宿主管理。
 
+### 常见问题：安装后看不到 Model Fetch 设置页
+
+可按以下顺序排查：
+
+1. 确认插件已安装并启用：
+
+   ```bash
+   openclaw plugins list
+   openclaw plugins doctor
+   ```
+
+2. 确认已经重新构建并让 Gateway 读取到最新 `openclaw.plugin.json`：
+
+   ```bash
+   npm run plugin:build
+   ```
+
+3. 重启 Gateway 或刷新 Control UI 页面，再进入：
+
+   - 设置页入口：`/settings/plugins/model-fetch?view=settings`
+   - 插件页面入口：`/plugin?plugin=model-fetch&id=model-fetch`
+
+4. 若页面可打开但无功能，请检查浏览器控制台是否有报错，并优先确认插件 session action 返回值是 JSON 兼容对象（本插件当前实现已按 JSON 兼容返回）。
+
 ## 使用流程
 
 1. 打开 **Model Fetch**，在当前 Provider 下拉框中选择目标 Provider。
