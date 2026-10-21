@@ -66,7 +66,13 @@ function createApi(initialConfig: Record<string, unknown>) {
     getConfig: () => config as {
       agents?: {
         defaults?: { modelPolicy?: { allow?: string[] } };
-        entries?: Record<string, { modelPolicy?: { allow?: string[] } }>;
+        entries?: Record<
+          string,
+          {
+            modelPolicy?: { allow?: string[] };
+            models?: Record<string, Record<string, unknown>>;
+          }
+        >;
       };
       models?: { providers?: Record<string, ProviderLike & { models?: ModelDefinitionLike[] }> };
       plugins?: { entries?: Record<string, { config?: unknown }> };
@@ -393,6 +399,80 @@ describe("Control UI operations", () => {
       "minimax-portal/MiniMax-M3.1-Flash",
     );
     expect(getConfig().agents?.entries?.main?.models).toMatchObject({
+      "minimax-portal/MiniMax-M3": {},
+      "minimax-portal/MiniMax-M3.1-Flash": {},
+    });
+  });
+
+  it("removes deselected models from target agent allowlists and model entries", async () => {
+    const { api, getConfig } = createApi(
+      {
+        agents: {
+          entries: {
+            main: {
+              modelPolicy: {
+                allow: [
+                  "openrouter/openai/gpt-4o",
+                  "minimax-portal/MiniMax-M3",
+                  "minimax-portal/MiniMax-M2.7-highspeed",
+                ],
+              },
+              models: {
+                "openrouter/openai/gpt-4o": {},
+                "minimax-portal/MiniMax-M3": {},
+                "minimax-portal/MiniMax-M2.7-highspeed": {},
+              },
+            },
+          },
+        },
+        ...baseConfig(
+          {
+            "minimax-portal": {
+              baseUrl: "https://api.minimax.chat/v1",
+              api: "openai-responses",
+              models: [
+                model("MiniMax-M3"),
+                model("MiniMax-M2.5"),
+              ],
+            },
+          },
+          {
+            "minimax-portal": {
+              filter: {
+                manualIds: ["MiniMax-M3", "MiniMax-M3.1-Flash"],
+              },
+              targetAgents: ["main"],
+            },
+          },
+        ),
+      },
+    );
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [
+        model("MiniMax-M3"),
+        model("MiniMax-M2.5"),
+        model("MiniMax-M3.1-Flash"),
+      ]),
+    });
+
+    const preview = await operations.previewApply("minimax-portal");
+    expect(preview.plan.removedIds).toEqual(["MiniMax-M2.5"]);
+
+    await operations.applyStrategy({
+      provider: "minimax-portal",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["MiniMax-M2.5"],
+    });
+
+    const main = getConfig().agents?.entries?.main;
+    expect(main?.modelPolicy?.allow).toEqual([
+      "openrouter/openai/gpt-4o",
+      "minimax-portal/MiniMax-M3",
+      "minimax-portal/MiniMax-M3.1-Flash",
+    ]);
+    expect(main?.models).toEqual({
+      "openrouter/openai/gpt-4o": {},
       "minimax-portal/MiniMax-M3": {},
       "minimax-portal/MiniMax-M3.1-Flash": {},
     });

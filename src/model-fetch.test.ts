@@ -461,6 +461,56 @@ describe("tool execution", () => {
     );
   });
 
+  it("removes deselected provider refs while preserving patterns and other providers", () => {
+    const config = {
+      agents: {
+        defaults: {
+          modelPolicy: {
+            allow: [
+              "openrouter/openai/gpt-4o",
+              "minimax-portal/MiniMax-M3",
+              "minimax-portal/MiniMax-M2.5",
+              "minimax-portal/*",
+            ],
+          },
+        },
+        entries: {
+          main: {
+            modelPolicy: {
+              allow: [
+                "openrouter/openai/gpt-4o",
+                "minimax-portal/MiniMax-M3",
+                "minimax-portal/MiniMax-M2.5",
+                "minimax-portal/*",
+              ],
+            },
+          },
+        },
+      },
+    };
+
+    const result = syncConfiguredModelPolicyAllow(
+      config,
+      "minimax-portal",
+      [model("MiniMax-M3"), model("MiniMax-M3.1-Flash")],
+      { targetAgents: ["main"] },
+    );
+
+    expect(result.syncedAgents).toEqual(["main"]);
+    expect(config.agents.defaults.modelPolicy.allow).toEqual([
+      "openrouter/openai/gpt-4o",
+      "minimax-portal/MiniMax-M3",
+      "minimax-portal/*",
+      "minimax-portal/MiniMax-M3.1-Flash",
+    ]);
+    expect(config.agents.entries.main.modelPolicy.allow).toEqual([
+      "openrouter/openai/gpt-4o",
+      "minimax-portal/MiniMax-M3",
+      "minimax-portal/*",
+      "minimax-portal/MiniMax-M3.1-Flash",
+    ]);
+  });
+
   it("adds selected provider models into target agent model entries", () => {
     const config = {
       agents: {
@@ -485,6 +535,36 @@ describe("tool execution", () => {
     expect(config.agents.entries.main.models).toMatchObject({
       "openrouter/openai/gpt-oss-120b:free": {},
       "minimax-portal/MiniMax-M3": {},
+      "minimax-portal/MiniMax-M3.1-Flash": {},
+    });
+  });
+
+  it("removes deselected provider model entries and preserves custom entries", () => {
+    const config = {
+      agents: {
+        entries: {
+          main: {
+            models: {
+              "minimax-portal/MiniMax-M2.5": {},
+              "minimax-portal/MiniMax-M3": { alias: "M3 Fast" },
+              "openrouter/openai/gpt-4o": {},
+            },
+          },
+        },
+      },
+    };
+
+    const result = syncAgentModelEntries(
+      config,
+      "minimax-portal",
+      [model("MiniMax-M3"), model("MiniMax-M3.1-Flash")],
+      { targetAgents: ["main"] },
+    );
+
+    expect(result.syncedAgents).toEqual(["main"]);
+    expect(config.agents.entries.main.models).toEqual({
+      "minimax-portal/MiniMax-M3": { alias: "M3 Fast" },
+      "openrouter/openai/gpt-4o": {},
       "minimax-portal/MiniMax-M3.1-Flash": {},
     });
   });

@@ -138,17 +138,43 @@ function hasProviderScopedRule(allow: readonly string[], providerId: string): bo
   return allow.some((ref) => ref === wildcard || ref.startsWith(prefix));
 }
 
-function appendModelRefs(
+function reconcileModelRefs(
   allowValue: unknown,
+  providerId: string,
   modelRefs: readonly string[],
 ): { changed: boolean; next?: string[] } {
   if (!Array.isArray(allowValue) || allowValue.length === 0) {
     return { changed: false };
   }
 
-  const next = normalizeAllowList(allowValue);
-  const existing = new Set(next);
+  const selectedRefs = new Set(modelRefs);
+  const providerPrefix = `${providerId}/`;
+  const next: string[] = [];
+  const existing = new Set<string>();
   let changed = false;
+
+  for (const item of allowValue) {
+    if (typeof item !== "string") {
+      changed = true;
+      continue;
+    }
+    const ref = item.trim();
+    if (!ref || existing.has(ref)) {
+      changed = true;
+      continue;
+    }
+    existing.add(ref);
+    if (
+      ref.startsWith(providerPrefix) &&
+      !ref.includes("*") &&
+      !selectedRefs.has(ref)
+    ) {
+      changed = true;
+      continue;
+    }
+    next.push(ref);
+  }
+
   for (const ref of modelRefs) {
     if (existing.has(ref)) continue;
     existing.add(ref);
@@ -169,12 +195,10 @@ export function syncConfiguredModelPolicyAllow(
 ): AllowlistSyncResult {
   const cfg = draft as ConfigLike;
   const modelRefs = models.map((model) => toModelRef(providerId, model.id));
-  if (modelRefs.length === 0) {
-    return { defaultsUpdated: false, syncedAgents: [] };
-  }
 
-  const defaultsResult = appendModelRefs(
+  const defaultsResult = reconcileModelRefs(
     cfg.agents?.defaults?.modelPolicy?.allow,
+    providerId,
     modelRefs,
   );
   let defaultsUpdated = false;
@@ -201,16 +225,21 @@ export function syncConfiguredModelPolicyAllow(
       forcedAgentSet?.has(agentId) ?? hasProviderScopedRule(normalized, providerId);
     if (!shouldSync) continue;
 
-    const result = appendModelRefs(entry.modelPolicy.allow, modelRefs);
-    if (!result.changed) continue;
-    agentEntries[agentId] = {
-      ...entry,
-      modelPolicy: {
-        ...entry.modelPolicy,
-        allow: result.next,
-      },
-    };
-    syncedAgents.push(agentId);
+    const result = reconcileModelRefs(entry.modelPolicy.allow, providerId, modelRefs);
+    const selectedWithAllowlist =
+      forcedAgentSet?.has(agentId) === true && normalized.length > 0;
+    if (result.changed) {
+      agentEntries[agentId] = {
+        ...entry,
+        modelPolicy: {
+          ...entry.modelPolicy,
+          allow: result.next,
+        },
+      };
+    }
+    if (result.changed || selectedWithAllowlist) {
+      syncedAgents.push(agentId);
+    }
   }
 
   return { defaultsUpdated, syncedAgents };
@@ -226,7 +255,6 @@ export function syncAgentModelEntries(
 ): AgentModelSyncResult {
   const cfg = draft as ConfigLike;
   const modelRefs = models.map((model) => toModelRef(providerId, model.id));
-  if (modelRefs.length === 0) return { syncedAgents: [] };
 
   const selectedAgents = normalizeAgentIds(options.targetAgents);
   if (selectedAgents.length === 0) return { syncedAgents: [] };
@@ -238,8 +266,17 @@ export function syncAgentModelEntries(
   for (const agentId of selectedAgents) {
     const entry = agentEntries[agentId];
     if (!entry) continue;
-    const modelsConfig = entry.models ?? {};
+    const selectedRefs = new Set(modelRefs);
+    const providerPrefix = `${providerId}/`;
+    const modelsConfig = { ...(entry.models ?? {}) };
     let changed = false;
+
+    for (const ref of Object.keys(modelsConfig)) {
+      if (!ref.startsWith(providerPrefix) || selectedRefs.has(ref)) continue;
+      delete modelsConfig[ref];
+      changed = true;
+    }
+
     for (const ref of modelRefs) {
       if (modelsConfig[ref]) continue;
       modelsConfig[ref] = {};

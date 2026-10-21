@@ -12,7 +12,7 @@
 - 应用策略前自动重新获取模型并生成删除清单；确认期间列表或配置发生变化时取消写入。
 - 默认使用替换模式，最终配置只保留当前策略选中的远端模型和已手动选择的模型。
 - 已有模型 ID 会保留原有的名称、价格、模态等扩展字段，不暴露 Provider API Key。
-- 若已配置 `agents.defaults.modelPolicy.allow`，应用策略会自动追加本次写入的 `provider/model` 到 allowlist，避免新模型写入后仍无法在 WebUI 中选择。
+- 选择“覆盖 Agent”后，应用策略会同步该 Agent 的 allowlist 与模型映射：新增本次选中的模型，并移除该 Provider 下已取消选择的精确条目，避免 WebUI 继续显示过期模型。
 
 ## 环境要求
 
@@ -114,7 +114,7 @@ openclaw plugins doctor
 7. 如果这次操作会删除已有模型，确认弹窗会逐项列出即将删除的模型。确认后才会写入。
 8. 回到 OpenClaw 的 Models 页面，即可选用新写入的模型。
 
-如果你启用了模型策略 allowlist（`agents.defaults.modelPolicy.allow` 或 `agents.entries.<agent>.modelPolicy.allow` 非空），插件在应用策略时会自动把本次写入的 `provider/model` 追加到相应 allowlist。它只会追加，不会删除已有策略条目。
+如果你启用了模型策略 allowlist（`agents.defaults.modelPolicy.allow` 或 `agents.entries.<agent>.modelPolicy.allow` 非空），插件在应用策略时会同步本次写入的 `provider/model`。对“覆盖 Agent”中选中的 Agent，同步会移除该 Provider 下已取消选择的精确模型条目；其他 Provider、通配规则（如 `provider/*`）和保留模型的自定义 Agent 配置不会被删除。
 
 应用默认采用替换模式：当前 Provider 中未被策略选中的模型会被删除。若预览后远端列表、筛选策略或配置中的模型发生变化，本次写入会中止并要求重新预览。
 
