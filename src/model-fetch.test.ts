@@ -433,4 +433,30 @@ describe("tool execution", () => {
     );
     expect(config.agents.entries.worker.modelPolicy.allow).toEqual(["openrouter/*"]);
   });
+
+  it("can force-sync selected target agents during apply", () => {
+    const config = {
+      agents: {
+        entries: {
+          main: {
+            modelPolicy: {
+              allow: ["openrouter/openai/gpt-oss-120b:free"],
+            },
+          },
+        },
+      },
+    };
+
+    const result = syncConfiguredModelPolicyAllow(
+      config,
+      "minimax-portal",
+      [model("MiniMax-M3.1-Flash")],
+      { targetAgents: ["main"] },
+    );
+
+    expect(result.syncedAgents).toEqual(["main"]);
+    expect(config.agents.entries.main.modelPolicy.allow).toContain(
+      "minimax-portal/MiniMax-M3.1-Flash",
+    );
+  });
 });

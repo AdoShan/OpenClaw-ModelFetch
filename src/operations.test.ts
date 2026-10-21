@@ -64,6 +64,10 @@ function createApi(initialConfig: Record<string, unknown>) {
     mutateConfigFile,
     registerSessionAction,
     getConfig: () => config as {
+      agents?: {
+        defaults?: { modelPolicy?: { allow?: string[] } };
+        entries?: Record<string, { modelPolicy?: { allow?: string[] } }>;
+      };
       models?: { providers?: Record<string, ProviderLike & { models?: ModelDefinitionLike[] }> };
       plugins?: { entries?: Record<string, { config?: unknown }> };
     },
@@ -91,29 +95,39 @@ function baseConfig(
 describe("Control UI operations", () => {
   it("lists every provider with its own normalized strategy", async () => {
     const { api } = createApi(
-      baseConfig(
-        {
-          openrouter: {
-            name: "OpenRouter",
-            baseUrl: "https://openrouter.ai/api/v1",
-            api: "openai-responses",
-            models: [model("openai/gpt-4o")],
-          },
-          ollama: {
-            baseUrl: "http://127.0.0.1:11434",
-            api: "ollama",
-            models: [],
+      {
+        agents: {
+          entries: {
+            main: {
+              modelPolicy: { allow: ["openrouter/openai/gpt-4o"] },
+            },
           },
         },
-        {
-          openrouter: {
-            filter: { includeRegex: "openai/", replace: false },
+        ...baseConfig(
+          {
+            openrouter: {
+              name: "OpenRouter",
+              baseUrl: "https://openrouter.ai/api/v1",
+              api: "openai-responses",
+              models: [model("openai/gpt-4o")],
+            },
+            ollama: {
+              baseUrl: "http://127.0.0.1:11434",
+              api: "ollama",
+              models: [],
+            },
           },
-          ollama: {
-            filter: { manualIds: ["qwen3:latest"] },
+          {
+            openrouter: {
+              filter: { includeRegex: "openai/", replace: false },
+              targetAgents: ["main"],
+            },
+            ollama: {
+              filter: { manualIds: ["qwen3:latest"] },
+            },
           },
-        },
-      ),
+        ),
+      },
     );
     const operations = createModelFetchOperations({ api });
     const output = await operations.listProviders();
@@ -130,6 +144,10 @@ describe("Control UI operations", () => {
     expect(
       output.providers.find((provider) => provider.id === "ollama")?.filter.manualIds,
     ).toEqual(["qwen3:latest"]);
+    expect(output.providers.find((provider) => provider.id === "openrouter")?.targetAgents).toEqual([
+      "main",
+    ]);
+    expect(output.agents).toEqual([{ id: "main", hasModelAllowlist: true }]);
   });
 
   it("fetches remote models without changing configuration", async () => {
@@ -192,6 +210,7 @@ describe("Control UI operations", () => {
         manualIds: ["openai/gpt-4o-mini", "openai/gpt-4o-mini"],
         replace: false,
       },
+      targetAgents: ["main"],
     });
 
     const pluginFilters = (
@@ -205,6 +224,7 @@ describe("Control UI operations", () => {
       manualIds: ["openai/gpt-4o-mini"],
       replace: true,
     });
+    expect(pluginFilters.openrouter.targetAgents).toEqual(["main"]);
     expect(pluginFilters.ollama).toEqual({
       filter: { manualIds: ["qwen3:latest"] },
     });

@@ -325,6 +325,29 @@
   padding: 8px;
 }
 
+.mf-agent-box {
+  min-height: 44px;
+  display: grid;
+  gap: 6px;
+  border: 1px dashed var(--mf-border-strong);
+  border-radius: 6px;
+  background: var(--mf-surface-muted);
+  padding: 8px;
+}
+
+.mf-agent-item {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--mf-text);
+  font-size: 12px;
+}
+
+.mf-agent-item .mf-model-check {
+  flex: 0 0 auto;
+}
+
 .mf-chip-empty {
   color: var(--mf-muted);
   padding: 7px 4px;

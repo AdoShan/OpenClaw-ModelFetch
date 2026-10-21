@@ -38,6 +38,16 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "targetAgents": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "maxItems": 256,
+                "uniqueItems": true
               }
             },
             "additionalProperties": false
@@ -51,9 +61,9 @@
     "onStartup": true
   },
   "controlUi": {
-    "entry": "dist/control-ui/1e0ef61407369d916c267d2b0a71a974e3eb5e365510adbe940923e2c5efab19/index.js",
+    "entry": "dist/control-ui/e7b2a8a372a676495b78ec52dbe12cb5154970f64d64c776a96aec3116b20a23/index.js",
     "styles": [
-      "dist/control-ui/1e0ef61407369d916c267d2b0a71a974e3eb5e365510adbe940923e2c5efab19/index.css"
+      "dist/control-ui/e7b2a8a372a676495b78ec52dbe12cb5154970f64d64c776a96aec3116b20a23/index.css"
     ]
   },
   "contracts": {

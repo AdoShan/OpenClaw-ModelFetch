@@ -108,12 +108,13 @@ openclaw plugins doctor
 1. 打开 **Model Fetch**，在当前 Provider 下拉框中选择目标 Provider。
 2. 点击 **获取远端模型**。这一步只读取远端模型列表，不写入配置。
 3. 设置包含正则、排除正则，或勾选白名单模型。勾选只会把模型加入白名单，不会立即修改 OpenClaw 配置。
-4. 点击 **保存策略**，保存当前 Provider 的独立筛选配置。
-5. 点击 **应用策略到配置**。插件会重新获取远端模型并检查配置。
-6. 如果这次操作会删除已有模型，确认弹窗会逐项列出即将删除的模型。确认后才会写入。
-7. 回到 OpenClaw 的 Models 页面，即可选用新写入的模型。
+4. 在“覆盖 Agent”里勾选要同步 allowlist 的 agent（仅对已配置 modelPolicy.allow 的 agent 生效）。
+5. 点击 **保存策略**，保存当前 Provider 的独立筛选配置与目标 agent。
+6. 点击 **应用策略到配置**。插件会重新获取远端模型并检查配置。
+7. 如果这次操作会删除已有模型，确认弹窗会逐项列出即将删除的模型。确认后才会写入。
+8. 回到 OpenClaw 的 Models 页面，即可选用新写入的模型。
 
-如果你启用了模型策略 allowlist（`agents.defaults.modelPolicy.allow` 非空），插件在应用策略时会自动把本次写入的 `provider/model` 追加到 allowlist。它只会追加，不会删除已有策略条目。
+如果你启用了模型策略 allowlist（`agents.defaults.modelPolicy.allow` 或 `agents.entries.<agent>.modelPolicy.allow` 非空），插件在应用策略时会自动把本次写入的 `provider/model` 追加到相应 allowlist。它只会追加，不会删除已有策略条目。
 
 应用默认采用替换模式：当前 Provider 中未被策略选中的模型会被删除。若预览后远端列表、筛选策略或配置中的模型发生变化，本次写入会中止并要求重新预览。
 

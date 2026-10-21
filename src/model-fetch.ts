@@ -87,6 +87,11 @@ type ConfigLike = {
   };
 };
 
+export type AllowlistSyncResult = {
+  defaultsUpdated: boolean;
+  syncedAgents: string[];
+};
+
 type GuardedFetchOptions = Parameters<typeof fetchWithSsrFGuard>[0];
 type GuardedFetchResult = Awaited<ReturnType<typeof fetchWithSsrFGuard>>;
 
@@ -104,6 +109,20 @@ function normalizeAllowList(value: unknown): string[] {
     if (!ref || seen.has(ref)) continue;
     seen.add(ref);
     normalized.push(ref);
+  }
+  return normalized;
+}
+
+function normalizeAgentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
   }
   return normalized;
 }
@@ -139,28 +158,43 @@ export function syncConfiguredModelPolicyAllow(
   draft: unknown,
   providerId: string,
   models: ModelDefinitionLike[],
-): void {
+  options: {
+    targetAgents?: readonly string[];
+  } = {},
+): AllowlistSyncResult {
   const cfg = draft as ConfigLike;
   const modelRefs = models.map((model) => toModelRef(providerId, model.id));
-  if (modelRefs.length === 0) return;
+  if (modelRefs.length === 0) {
+    return { defaultsUpdated: false, syncedAgents: [] };
+  }
 
   const defaultsResult = appendModelRefs(
     cfg.agents?.defaults?.modelPolicy?.allow,
     modelRefs,
   );
+  let defaultsUpdated = false;
   if (defaultsResult.changed) {
     cfg.agents ??= {};
     cfg.agents.defaults ??= {};
     cfg.agents.defaults.modelPolicy ??= {};
     cfg.agents.defaults.modelPolicy.allow = defaultsResult.next;
+    defaultsUpdated = true;
   }
 
   const agentEntries = cfg.agents?.entries;
-  if (!agentEntries) return;
+  if (!agentEntries) {
+    return { defaultsUpdated, syncedAgents: [] };
+  }
+
+  const selectedAgents = normalizeAgentIds(options.targetAgents);
+  const forcedAgentSet = selectedAgents.length > 0 ? new Set(selectedAgents) : null;
+  const syncedAgents: string[] = [];
   for (const [agentId, entry] of Object.entries(agentEntries)) {
     if (!entry?.modelPolicy) continue;
     const normalized = normalizeAllowList(entry.modelPolicy.allow);
-    if (!hasProviderScopedRule(normalized, providerId)) continue;
+    const shouldSync =
+      forcedAgentSet?.has(agentId) ?? hasProviderScopedRule(normalized, providerId);
+    if (!shouldSync) continue;
 
     const result = appendModelRefs(entry.modelPolicy.allow, modelRefs);
     if (!result.changed) continue;
@@ -171,7 +205,10 @@ export function syncConfiguredModelPolicyAllow(
         allow: result.next,
       },
     };
+    syncedAgents.push(agentId);
   }
+
+  return { defaultsUpdated, syncedAgents };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -195,6 +232,11 @@ function parseFilter(value: unknown): ModelFilterConfig {
   };
 }
 
+function parseTargetAgents(value: unknown): string[] {
+  if (!isRecord(value)) return [];
+  return normalizeAgentIds(value.targetAgents);
+}
+
 export function resolveProviderFilter(
   providerId: string,
   runtimeConfig: unknown,
@@ -209,6 +251,22 @@ export function resolveProviderFilter(
       : factoryConfig?.providers;
   const providerEntry = isRecord(source) ? source[providerId] : undefined;
   return parseFilter(providerEntry);
+}
+
+export function resolveProviderTargetAgents(
+  providerId: string,
+  runtimeConfig: unknown,
+  factoryConfig: ModelFetchConfig | undefined,
+): string[] {
+  const cfg = runtimeConfig as ConfigLike | undefined;
+  const runtimeEntry = cfg?.plugins?.entries?.["model-fetch"];
+  const runtimePluginConfig = isRecord(runtimeEntry) ? runtimeEntry.config : undefined;
+  const source =
+    isRecord(runtimePluginConfig) && isRecord(runtimePluginConfig.providers)
+      ? runtimePluginConfig.providers
+      : factoryConfig?.providers;
+  const providerEntry = isRecord(source) ? source[providerId] : undefined;
+  return parseTargetAgents(providerEntry);
 }
 
 function compileRegex(pattern: string | undefined, field: string): RegExp | undefined {
@@ -586,7 +644,9 @@ export async function runModelFetch({
         const target = cfg.models.providers[providerId] ?? { ...provider };
         target.models = merge.models;
         cfg.models.providers[providerId] = target;
-        syncConfiguredModelPolicyAllow(cfg, providerId, merge.models);
+        syncConfiguredModelPolicyAllow(cfg, providerId, merge.models, {
+          targetAgents: resolveProviderTargetAgents(providerId, cfg, factoryConfig),
+        });
       },
     });
     configPath = result.path;

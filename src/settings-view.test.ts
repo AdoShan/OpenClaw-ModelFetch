@@ -30,6 +30,7 @@ function providersOutput(): ListProvidersOutput {
         baseUrl: "https://openrouter.ai/api/v1",
         configPath: "models.providers.openrouter.models",
         filter: { includeRegex: "", excludeRegex: "", manualIds: [], replace: true },
+        targetAgents: ["main"],
         configuredModels: [
           { id: "openai/gpt-4o", name: "GPT-4o", contextWindow: 128_000 },
           { id: "stale/model", name: "Stale model", contextWindow: 32_000 },
@@ -42,10 +43,15 @@ function providersOutput(): ListProvidersOutput {
         baseUrl: "http://127.0.0.1:11434",
         configPath: "models.providers.ollama.models",
         filter: { manualIds: ["qwen3:latest"], replace: true },
+        targetAgents: [],
         configuredModels: [
           { id: "qwen3:latest", name: "Qwen 3" },
         ],
       },
+    ],
+    agents: [
+      { id: "main", hasModelAllowlist: true },
+      { id: "worker", hasModelAllowlist: false },
     ],
   };
 }
@@ -104,6 +110,8 @@ function createHarness() {
     unchanged: 1,
     removed: 1,
     selectedIds: openRouterModels.map((model) => model.id),
+    targetAgents: ["main"],
+    syncedAgents: ["main"],
     models: openRouterModels,
   }));
 
@@ -359,6 +367,7 @@ describe("Model Fetch settings view", () => {
         manualIds: ["anthropic/claude"],
         replace: true,
       },
+      targetAgents: ["main"],
     });
   });
 
@@ -404,6 +413,7 @@ describe("Model Fetch settings view", () => {
         provider: "openrouter",
         fingerprint: "a".repeat(64),
         expectedRemovals: ["stale/model"],
+        targetAgents: ["main"],
       });
     });
   });

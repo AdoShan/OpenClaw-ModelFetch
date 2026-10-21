@@ -3,6 +3,7 @@ import type { ControlUiView, ControlUiViewContext } from "openclaw/plugin-sdk/co
 import { modelFetchContract } from "./contract.js";
 import type {
   ApplyPlan,
+  AgentSummary,
   FetchModelsOutput,
   ModelFilterConfig,
   ModelView,
@@ -15,6 +16,7 @@ type ModelRow = ModelView & {
 
 type DraftState = {
   filter: ModelFilterConfig;
+  targetAgents: string[];
   dirty: boolean;
 };
 
@@ -90,7 +92,7 @@ const PAGE_MARKUP = `
       <div class="mf-panel-head">
         <div>
           <h2 class="mf-panel-title" id="mf-strategy-title">筛选策略</h2>
-          <p class="mf-panel-copy">策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；正则失焦或按回车后更新结果。</p>
+          <p class="mf-panel-copy">策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则失焦或按回车后更新结果。</p>
         </div>
         <div class="mf-panel-actions">
           <button class="mf-button is-small" data-ref="saveButton" type="button" disabled>保存策略</button>
@@ -123,6 +125,13 @@ const PAGE_MARKUP = `
             <strong>默认替换 Provider 模型列表</strong>
             应用时会删除未选中的已有模型；写入前会重新获取远端列表，并逐项校验确认的删除模型。
           </div>
+        </div>
+        <div>
+          <div class="mf-section-label">
+            <span>覆盖 Agent</span>
+            <span class="mf-count" data-ref="agentTargetCount">0</span>
+          </div>
+          <div class="mf-agent-box" data-ref="agentTargets"></div>
         </div>
       </div>
     </section>
@@ -187,6 +196,11 @@ function cloneFilter(filter: ModelFilterConfig): ModelFilterConfig {
     manualIds: [...(filter.manualIds ?? [])],
     replace: true,
   };
+}
+
+function normalizeAgentTargets(targetAgents: readonly string[] | undefined): string[] {
+  if (!targetAgents || targetAgents.length === 0) return [];
+  return [...new Set(targetAgents.map((id) => id.trim()).filter((id) => id.length > 0))];
 }
 
 function manualIds(filter: ModelFilterConfig): Set<string> {
@@ -303,6 +317,7 @@ export function mountModelFetchSettings(
   let disposed = false;
   let generation = 0;
   let providers: ProviderSummary[] = [];
+  let agents: AgentSummary[] = [];
   let currentId = "";
   let search = "";
   let fetching = false;
@@ -341,6 +356,8 @@ export function mountModelFetchSettings(
     excludeNote: page.querySelector<HTMLElement>('[data-ref="excludeNote"]')!,
     whitelistBox: page.querySelector<HTMLElement>('[data-ref="whitelistBox"]')!,
     whitelistCount: page.querySelector<HTMLElement>('[data-ref="whitelistCount"]')!,
+    agentTargetCount: page.querySelector<HTMLElement>('[data-ref="agentTargetCount"]')!,
+    agentTargets: page.querySelector<HTMLElement>('[data-ref="agentTargets"]')!,
     search: page.querySelector<HTMLInputElement>('[data-ref="search"]')!,
     modelRows: page.querySelector<HTMLTableSectionElement>('[data-ref="modelRows"]')!,
     empty: page.querySelector<HTMLElement>('[data-ref="empty"]')!,
@@ -448,6 +465,50 @@ export function mountModelFetchSettings(
       });
       chip.append(label, remove);
       refs.whitelistBox.append(chip);
+    }
+  }
+
+  function renderAgentTargets(draft: DraftState | undefined) {
+    refs.agentTargets.replaceChildren();
+    const selected = new Set(draft?.targetAgents ?? []);
+    refs.agentTargetCount.textContent = String(selected.size);
+
+    if (agents.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "mf-chip-empty";
+      empty.textContent = "未检测到可配置的 Agent";
+      refs.agentTargets.append(empty);
+      return;
+    }
+
+    for (const agent of agents) {
+      const label = document.createElement("label");
+      label.className = "mf-agent-item";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "mf-model-check";
+      checkbox.checked = selected.has(agent.id);
+      checkbox.disabled = loading || saving || previewing || applying;
+      checkbox.setAttribute("aria-label", `覆盖 Agent ${agent.id} 的模型 allowlist`);
+      checkbox.addEventListener("change", () => {
+        const current = currentDraft();
+        if (!current) return;
+        const next = new Set(current.targetAgents);
+        if (checkbox.checked) next.add(agent.id);
+        else next.delete(agent.id);
+        current.targetAgents = [...next].sort((left, right) => left.localeCompare(right));
+        current.dirty = true;
+        notice = "";
+        render();
+      });
+
+      const text = document.createElement("span");
+      const suffix = agent.hasModelAllowlist ? "" : "（未配置 allowlist）";
+      text.textContent = `${agent.id}${suffix}`;
+
+      label.append(checkbox, text);
+      refs.agentTargets.append(label);
     }
   }
 
@@ -600,6 +661,7 @@ export function mountModelFetchSettings(
       `新增 ${changes.addedIds.length} · 删除 ${changes.removedIds.length}`;
     updateRegexNotes(analysis);
     renderWhitelist(filter);
+    renderAgentTargets(draft);
     renderRows(
       rows,
       changes.selected,
@@ -628,21 +690,16 @@ export function mountModelFetchSettings(
     updateButtons(draft, analysis.error);
   }
 
-  function setDraft(filter: ModelFilterConfig, dirty: boolean) {
-    if (!currentId) return;
-    drafts.set(currentId, { filter: cloneFilter(filter), dirty });
-    notice = "";
-    render();
-  }
-
   async function refreshProviders(initializeDrafts: boolean) {
     const output = await feature.invoke("providers.list", {});
     if (context.signal.aborted || disposed) return;
     providers = output.providers;
+    agents = output.agents;
     for (const provider of providers) {
       if (initializeDrafts || !drafts.has(provider.id)) {
         drafts.set(provider.id, {
           filter: cloneFilter(provider.filter),
+          targetAgents: normalizeAgentTargets(provider.targetAgents),
           dirty: false,
         });
       }
@@ -722,11 +779,14 @@ export function mountModelFetchSettings(
       const output = await feature.invoke("strategy.save", {
         provider: provider.id,
         filter: { ...draft.filter, replace: true },
+        targetAgents: draft.targetAgents,
       });
       if (disposed || context.signal.aborted) return;
       provider.filter = cloneFilter(output.filter);
+      provider.targetAgents = normalizeAgentTargets(output.targetAgents);
       drafts.set(provider.id, {
         filter: cloneFilter(output.filter),
+        targetAgents: normalizeAgentTargets(output.targetAgents),
         dirty: false,
       });
       setNotice(`${provider.label} 的筛选策略已保存`);
@@ -758,6 +818,8 @@ export function mountModelFetchSettings(
 
   async function applyPlan(provider: ProviderSummary, plan: ApplyPlan) {
     if (applying) return;
+    const draft = currentDraft();
+    if (!draft) return;
     applying = true;
     error = "";
     render();
@@ -766,6 +828,7 @@ export function mountModelFetchSettings(
         provider: provider.id,
         fingerprint: plan.fingerprint,
         expectedRemovals: plan.removedIds,
+        targetAgents: draft.targetAgents,
       });
       if (disposed || context.signal.aborted) return;
       remotes.set(provider.id, {
@@ -773,8 +836,14 @@ export function mountModelFetchSettings(
         fetchedAt: output.fetchedAt,
       });
       await refreshProviders(false);
+      const syncedSuffix =
+        output.syncedAgents.length > 0
+          ? `；同步 Agent：${output.syncedAgents.join(", ")}`
+          : output.targetAgents.length > 0
+            ? "；目标 Agent 未更新（可能未配置 allowlist）"
+            : "";
       setNotice(
-        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}`,
+        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}`,
       );
       pendingPlan = null;
       if (typeof refs.deleteDialog.close === "function" && refs.deleteDialog.open) {

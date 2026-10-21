@@ -33,6 +33,12 @@ export const modelFetchConfigSchema = Type.Object(
         Type.Object(
           {
             filter: Type.Optional(modelFetchFilterSchema),
+            targetAgents: Type.Optional(
+              Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+                maxItems: 256,
+                uniqueItems: true,
+              }),
+            ),
           },
           { additionalProperties: false },
         ),
@@ -127,12 +133,26 @@ export const providerSummarySchema = Type.Object(
     baseUrl: Type.String({ maxLength: 2_048 }),
     configPath: Type.String({ maxLength: 2_048 }),
     filter: modelFetchFilterSchema,
+    targetAgents: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+      maxItems: 256,
+      uniqueItems: true,
+    }),
     configuredModels: Type.Array(modelViewSchema, { maxItems: 2_000 }),
   },
   { additionalProperties: false },
 );
 
 export type ProviderSummary = Static<typeof providerSummarySchema>;
+
+export const agentSummarySchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 128 }),
+    hasModelAllowlist: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export type AgentSummary = Static<typeof agentSummarySchema>;
 
 const emptyInputSchema = Type.Object({}, { additionalProperties: false });
 const providerInputSchema = Type.Object(
@@ -143,6 +163,7 @@ const providerInputSchema = Type.Object(
 export const listProvidersOutputSchema = Type.Object(
   {
     providers: Type.Array(providerSummarySchema, { maxItems: 256 }),
+    agents: Type.Array(agentSummarySchema, { maxItems: 512 }),
   },
   { additionalProperties: false },
 );
@@ -166,6 +187,10 @@ export const saveStrategyOutputSchema = Type.Object(
     savedAt: Type.String({ maxLength: 64 }),
     configPath: Type.String({ maxLength: 2_048 }),
     filter: modelFetchFilterSchema,
+    targetAgents: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+      maxItems: 256,
+      uniqueItems: true,
+    }),
   },
   { additionalProperties: false },
 );
@@ -176,6 +201,12 @@ export const saveStrategyInputSchema = Type.Object(
   {
     provider: providerIdSchema,
     filter: modelFetchFilterSchema,
+    targetAgents: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+        maxItems: 256,
+        uniqueItems: true,
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -213,6 +244,12 @@ export const applyStrategyInputSchema = Type.Object(
     provider: providerIdSchema,
     fingerprint: Type.String({ minLength: 64, maxLength: 64 }),
     expectedRemovals: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
+    targetAgents: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+        maxItems: 256,
+        uniqueItems: true,
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -230,6 +267,14 @@ export const applyStrategyOutputSchema = Type.Object(
     unchanged: Type.Integer({ minimum: 0 }),
     removed: Type.Integer({ minimum: 0 }),
     selectedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
+    targetAgents: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+      maxItems: 256,
+      uniqueItems: true,
+    }),
+    syncedAgents: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+      maxItems: 256,
+      uniqueItems: true,
+    }),
     models: Type.Array(modelViewSchema, { maxItems: 2_000 }),
   },
   { additionalProperties: false },

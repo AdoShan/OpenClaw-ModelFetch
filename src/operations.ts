@@ -12,6 +12,7 @@ import {
   mergeModels,
   resolveApiKey,
   resolveProviderFilter,
+  resolveProviderTargetAgents,
   runModelFetch,
   selectFetchedModels,
   syncConfiguredModelPolicyAllow,
@@ -22,6 +23,7 @@ import {
 } from "./model-fetch.js";
 import type {
   ApplyPlan,
+  AgentSummary,
   ApplyStrategyInput,
   ApplyStrategyOutput,
   FetchModelsOutput,
@@ -35,6 +37,17 @@ import type {
 } from "./schemas.js";
 
 type MutableConfig = {
+  agents?: {
+    entries?: Record<
+      string,
+      | {
+          modelPolicy?: {
+            allow?: unknown;
+          };
+        }
+      | undefined
+    >;
+  };
   models?: {
     providers?: Record<string, ProviderLike | undefined>;
   };
@@ -95,6 +108,11 @@ function normalizeFilter(filter: ModelFilterConfig): ModelFilterConfig {
   return normalized;
 }
 
+function normalizeTargetAgents(targetAgents: readonly string[] | undefined): string[] {
+  if (!targetAgents || targetAgents.length === 0) return [];
+  return [...new Set(targetAgents.map((id) => id.trim()).filter((id) => id.length > 0))];
+}
+
 function configPath(providerId: string): string {
   return `models.providers.${providerId}.models`;
 }
@@ -136,7 +154,12 @@ function sameStringSets(left: readonly string[], right: readonly string[]): bool
   );
 }
 
-function ensurePluginEntry(draft: MutableConfig, providerId: string, filter: ModelFilterConfig) {
+function ensurePluginEntry(
+  draft: MutableConfig,
+  providerId: string,
+  filter: ModelFilterConfig,
+  targetAgents: readonly string[] = [],
+) {
   draft.plugins ??= {};
   draft.plugins.entries ??= {};
 
@@ -149,6 +172,7 @@ function ensurePluginEntry(draft: MutableConfig, providerId: string, filter: Mod
   providers[providerId] = {
     ...existingProvider,
     filter,
+    targetAgents: normalizeTargetAgents(targetAgents),
   };
   pluginConfig.providers = providers;
   entry.config = pluginConfig;
@@ -174,6 +198,10 @@ export function createModelFetchOperations({
 
   function savedFilter(providerId: string, config = currentConfig()): ModelFilterConfig {
     return normalizeFilter(resolveProviderFilter(providerId, config, factoryConfig));
+  }
+
+  function savedTargetAgents(providerId: string, config = currentConfig()): string[] {
+    return normalizeTargetAgents(resolveProviderTargetAgents(providerId, config, factoryConfig));
   }
 
   async function fetchModelsForProvider(providerId: string): Promise<{
@@ -254,6 +282,15 @@ export function createModelFetchOperations({
     const config = currentConfig();
     const providers = (config as MutableConfig | undefined)?.models?.providers ?? {};
     const result: ProviderSummary[] = [];
+    const agentEntries = (config as MutableConfig | undefined)?.agents?.entries ?? {};
+    const agents: AgentSummary[] = Object.entries(agentEntries)
+      .filter(([agentId]) => typeof agentId === "string" && agentId.trim().length > 0)
+      .map(([agentId, entry]) => ({
+        id: agentId,
+        hasModelAllowlist:
+          Array.isArray(entry?.modelPolicy?.allow) && entry.modelPolicy.allow.length > 0,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id));
 
     for (const providerId of Object.keys(providers).sort((left, right) =>
       left.localeCompare(right),
@@ -271,11 +308,12 @@ export function createModelFetchOperations({
         baseUrl: provider.baseUrl,
         configPath: configPath(providerId),
         filter: savedFilter(providerId, config),
+        targetAgents: savedTargetAgents(providerId, config),
         configuredModels: (provider.models ?? []).map(toModelView),
       });
     }
 
-    return { providers: result };
+    return { providers: result, agents };
   }
 
   async function fetchModelsForUi(providerId: string): Promise<FetchModelsOutput> {
@@ -290,17 +328,23 @@ export function createModelFetchOperations({
   async function saveStrategy({
     provider,
     filter,
+    targetAgents,
   }: SaveStrategyInput): Promise<SaveStrategyOutput> {
     const config = currentConfig();
     getProvider(config, provider);
     const nextFilter = normalizeFilter(filter);
     selectFetchedModels([], nextFilter);
 
+    const nextTargetAgents =
+      targetAgents === undefined
+        ? savedTargetAgents(provider, config)
+        : normalizeTargetAgents(targetAgents);
+
     const result = await runtime.config.mutateConfigFile({
       base: "source",
       afterWrite: { mode: "auto" },
       mutate: (draft) => {
-        ensurePluginEntry(draft as MutableConfig, provider, nextFilter);
+        ensurePluginEntry(draft as MutableConfig, provider, nextFilter, nextTargetAgents);
       },
     });
 
@@ -309,6 +353,7 @@ export function createModelFetchOperations({
       savedAt: now().toISOString(),
       configPath: result.path,
       filter: nextFilter,
+      targetAgents: nextTargetAgents,
     };
   }
 
@@ -334,6 +379,7 @@ export function createModelFetchOperations({
     provider,
     fingerprint,
     expectedRemovals,
+    targetAgents,
   }: ApplyStrategyInput): Promise<ApplyStrategyOutput> {
     const computed = await computePlan(provider);
     if (computed.fingerprint !== fingerprint) {
@@ -342,6 +388,11 @@ export function createModelFetchOperations({
     if (!sameStringSets(computed.removedIds, expectedRemovals)) {
       throw new Error("待删除模型与确认列表不一致，已取消写入。请重新预览。");
     }
+
+    const nextTargetAgents = normalizeTargetAgents(
+      targetAgents ?? savedTargetAgents(provider),
+    );
+    let syncedAgents: string[] = [];
 
     const result = await runtime.config.mutateConfigFile({
       base: "source",
@@ -360,7 +411,11 @@ export function createModelFetchOperations({
           throw new Error("Provider 筛选策略在确认后发生变化，已取消写入。请重新预览。");
         }
         target.models = computed.finalModels;
-        syncConfiguredModelPolicyAllow(config, provider, computed.finalModels);
+        ensurePluginEntry(config, provider, computed.filter, nextTargetAgents);
+        const syncResult = syncConfiguredModelPolicyAllow(config, provider, computed.finalModels, {
+          targetAgents: nextTargetAgents,
+        });
+        syncedAgents = syncResult.syncedAgents;
       },
     });
 
@@ -374,6 +429,8 @@ export function createModelFetchOperations({
       unchanged: computed.unchangedCount,
       removed: computed.removedIds.length,
       selectedIds: computed.selectedIds,
+      targetAgents: nextTargetAgents,
+      syncedAgents,
       models: computed.models,
     };
   }
