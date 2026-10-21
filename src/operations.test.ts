@@ -392,6 +392,10 @@ describe("Control UI operations", () => {
     expect(getConfig().agents?.entries?.main?.modelPolicy?.allow).toContain(
       "minimax-portal/MiniMax-M3.1-Flash",
     );
+    expect(getConfig().agents?.entries?.main?.models).toMatchObject({
+      "minimax-portal/MiniMax-M3": {},
+      "minimax-portal/MiniMax-M3.1-Flash": {},
+    });
   });
 
   it("refuses a stale confirmation when the remote list changes", async () => {

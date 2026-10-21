@@ -8,6 +8,7 @@ import {
   mergeModels,
   resolveEffectiveFilter,
   resolveProviderFilter,
+  syncAgentModelEntries,
   selectFetchedModels,
   syncConfiguredModelPolicyAllow,
   type ModelDefinitionLike,
@@ -458,5 +459,33 @@ describe("tool execution", () => {
     expect(config.agents.entries.main.modelPolicy.allow).toContain(
       "minimax-portal/MiniMax-M3.1-Flash",
     );
+  });
+
+  it("adds selected provider models into target agent model entries", () => {
+    const config = {
+      agents: {
+        entries: {
+          main: {
+            models: {
+              "openrouter/openai/gpt-oss-120b:free": {},
+            },
+          },
+        },
+      },
+    };
+
+    const result = syncAgentModelEntries(
+      config,
+      "minimax-portal",
+      [model("MiniMax-M3"), model("MiniMax-M3.1-Flash")],
+      { targetAgents: ["main"] },
+    );
+
+    expect(result.syncedAgents).toEqual(["main"]);
+    expect(config.agents.entries.main.models).toMatchObject({
+      "openrouter/openai/gpt-oss-120b:free": {},
+      "minimax-portal/MiniMax-M3": {},
+      "minimax-portal/MiniMax-M3.1-Flash": {},
+    });
   });
 });

@@ -15,6 +15,7 @@ import {
   resolveProviderTargetAgents,
   runModelFetch,
   selectFetchedModels,
+  syncAgentModelEntries,
   syncConfiguredModelPolicyAllow,
   type ModelDefinitionLike,
   type ModelFetchConfig,
@@ -416,6 +417,9 @@ export function createModelFetchOperations({
           targetAgents: nextTargetAgents,
         });
         syncedAgents = syncResult.syncedAgents;
+        syncAgentModelEntries(config, provider, computed.finalModels, {
+          targetAgents: syncedAgents,
+        });
       },
     });
 

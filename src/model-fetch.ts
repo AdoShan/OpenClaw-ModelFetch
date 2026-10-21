@@ -69,6 +69,7 @@ type ConfigLike = {
           modelPolicy?: {
             allow?: unknown;
           };
+          models?: Record<string, Record<string, unknown> | undefined>;
         }
       | undefined
     >;
@@ -89,6 +90,10 @@ type ConfigLike = {
 
 export type AllowlistSyncResult = {
   defaultsUpdated: boolean;
+  syncedAgents: string[];
+};
+
+export type AgentModelSyncResult = {
   syncedAgents: string[];
 };
 
@@ -209,6 +214,46 @@ export function syncConfiguredModelPolicyAllow(
   }
 
   return { defaultsUpdated, syncedAgents };
+}
+
+export function syncAgentModelEntries(
+  draft: unknown,
+  providerId: string,
+  models: ModelDefinitionLike[],
+  options: {
+    targetAgents?: readonly string[];
+  } = {},
+): AgentModelSyncResult {
+  const cfg = draft as ConfigLike;
+  const modelRefs = models.map((model) => toModelRef(providerId, model.id));
+  if (modelRefs.length === 0) return { syncedAgents: [] };
+
+  const selectedAgents = normalizeAgentIds(options.targetAgents);
+  if (selectedAgents.length === 0) return { syncedAgents: [] };
+
+  const agentEntries = cfg.agents?.entries;
+  if (!agentEntries) return { syncedAgents: [] };
+
+  const syncedAgents: string[] = [];
+  for (const agentId of selectedAgents) {
+    const entry = agentEntries[agentId];
+    if (!entry) continue;
+    const modelsConfig = entry.models ?? {};
+    let changed = false;
+    for (const ref of modelRefs) {
+      if (modelsConfig[ref]) continue;
+      modelsConfig[ref] = {};
+      changed = true;
+    }
+    if (!changed) continue;
+    agentEntries[agentId] = {
+      ...entry,
+      models: modelsConfig,
+    };
+    syncedAgents.push(agentId);
+  }
+
+  return { syncedAgents };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -644,8 +689,12 @@ export async function runModelFetch({
         const target = cfg.models.providers[providerId] ?? { ...provider };
         target.models = merge.models;
         cfg.models.providers[providerId] = target;
-        syncConfiguredModelPolicyAllow(cfg, providerId, merge.models, {
-          targetAgents: resolveProviderTargetAgents(providerId, cfg, factoryConfig),
+        const targetAgents = resolveProviderTargetAgents(providerId, cfg, factoryConfig);
+        const syncResult = syncConfiguredModelPolicyAllow(cfg, providerId, merge.models, {
+          targetAgents,
+        });
+        syncAgentModelEntries(cfg, providerId, merge.models, {
+          targetAgents: syncResult.syncedAgents,
         });
       },
     });
