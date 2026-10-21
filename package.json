@@ -1,25 +1,52 @@
 {
   "name": "openclaw-plugin-model-fetch",
   "version": "0.2.0",
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "plugin:build": "npm run build && openclaw plugins build --entry ./dist/index.js",
-    "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/index.js",
-    "test": "vitest run --config ./vitest.config.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json"
+  "description": "OpenClaw plugin tool that refreshes configured provider model lists into OpenClaw config with independent per-provider filters.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdoShan/OpenClaw-ModelFetch.git"
+  },
+  "homepage": "https://github.com/AdoShan/OpenClaw-ModelFetch#readme",
+  "bugs": {
+    "url": "https://github.com/AdoShan/OpenClaw-ModelFetch/issues"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "model-fetch",
+    "openrouter",
+    "ollama",
+    "models"
+  ],
+  "engines": {
+    "node": ">=24.16.0"
   },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md"
   ],
-  "peerDependencies": {
-    "openclaw": ">=2026.10.5"
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
+    "plugin:build": "npm run build && openclaw plugins build --entry ./dist/index.js",
+    "plugin:validate": "npm run plugin:build && openclaw plugins validate --entry ./dist/index.js",
+    "test": "vitest run --config ./vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json",
+    "prepublishOnly": "npm run plugin:build",
+    "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
     "typebox": "^1.1.38"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.10.5"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
@@ -39,5 +66,8 @@
     "build": {
       "openclawVersion": "2026.10.5"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

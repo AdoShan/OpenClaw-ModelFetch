@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, Test, Build, Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build plugin
+        run: npm run plugin:build
+
+      - name: Validate plugin
+        run: npm run plugin:validate
+
+      - name: Package dry run
+        run: npm publish --dry-run --access public
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error

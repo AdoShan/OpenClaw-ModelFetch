@@ -1,5 +1,9 @@
 # OpenClaw Model Fetch
 
+[![CI](https://github.com/AdoShan/OpenClaw-ModelFetch/actions/workflows/ci.yml/badge.svg)](https://github.com/AdoShan/OpenClaw-ModelFetch/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/openclaw-plugin-model-fetch.svg)](https://www.npmjs.com/package/openclaw-plugin-model-fetch)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 在 OpenClaw Control UI 中获取指定 Provider 的远端模型，按 Provider 独立配置包含正则、排除正则和手动白名单，再将确认后的模型列表写入 `models.providers.<providerId>.models`，供 WebUI 选用。
 
 ## 功能
