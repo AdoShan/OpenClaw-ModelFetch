@@ -239,3 +239,43 @@ npm run plugin:validate
 ```
 
 浏览器界面源文件是 `src/control-ui.ts` 和 `src/settings-view.ts`。`npm run plugin:build` 会生成带内容哈希的 `dist/control-ui/` 资源，并更新 `openclaw.plugin.json.controlUi`。
+
+## 发布到 npm
+
+发布走 GitHub Actions 的 **Trusted Publishing（OIDC）**，仓库里不保存任何长期 token。
+
+### 一次性引导
+
+1. 本地登录并发布首版（走你自己的 2FA，不产生任何 token）：
+
+```bash
+npm login
+npm publish
+```
+
+2. 在包设置页配置可信发布者：
+   <https://www.npmjs.com/package/openclaw-plugin-model-fetch/settings>
+
+   | 字段 | 值 |
+   |---|---|
+   | Provider | GitHub Actions |
+   | Organization / user | AdoShan |
+   | Repository | OpenClaw-ModelFetch |
+   | Workflow filename | `publish.yml` |
+
+### 之后每次发布
+
+```bash
+npm version 0.3.0
+git push --follow-tags
+```
+
+`v*` tag 触发 `.github/workflows/publish.yml`：先校验 tag 与 `package.json` 版本一致（不一致直接失败），
+再跑 typecheck → test → build → validate，最后 `npm publish --provenance`。
+
+### 持续集成
+
+`.github/workflows/ci.yml` 在 push 到 `main` 和 PR 时运行同一套校验（不含发布），
+并附一次 `npm publish --dry-run` 预览实际会打进 npm 包的产物。
+
+> 注意：某个版本号首次发布后不可撤回，`npm unpublish` 需等 24 小时且仅对无人安装过的版本生效。
