@@ -9,6 +9,7 @@ import {
   resolveEffectiveFilter,
   resolveProviderFilter,
   selectFetchedModels,
+  syncConfiguredModelPolicyAllow,
   type ModelDefinitionLike,
   type ModelFetchConfig,
   type ModelFetchToolResult,
@@ -105,6 +106,9 @@ describe("filtering", () => {
       manualIds: ["x/manual"],
       replace: true,
     });
+
+    expect(resolveEffectiveFilter({ replace: false }, { provider: "x" }).replace).toBe(true);
+    expect(resolveEffectiveFilter({ replace: false }, { provider: "x", replace: false }).replace).toBe(false);
   });
 
   it("rejects an invalid regex with a clear field name", () => {
@@ -340,5 +344,53 @@ describe("tool execution", () => {
       persisted: false,
       configPath: "models.providers.<providerId>.models",
     });
+  });
+
+  it("appends selected models to modelPolicy.allow when allowlist is configured", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          modelPolicy: {
+            allow: ["openai/gpt-6-astra", "minimax-portal/MiniMax-M3"],
+          },
+        },
+      },
+      models: {
+        providers: {
+          "minimax-portal": {
+            baseUrl: "https://api.minimax.chat/v1",
+            api: "openai-responses",
+            models: [model("MiniMax-M3")],
+          },
+        },
+      },
+    };
+
+    const fetched = [model("MiniMax-M3"), model("MiniMax-M3.1-Flash")];
+    const { mutateConfigFile, tool } = createRuntimeMocks(config, fetched);
+
+    await tool.execute("call-3", { provider: "minimax-portal" });
+
+    const mutation = mutateConfigFile.mock.calls[0]?.[0];
+    const draft = structuredClone(config);
+    mutation?.mutate(draft);
+
+    expect(draft.agents?.defaults?.modelPolicy?.allow).toEqual([
+      "openai/gpt-6-astra",
+      "minimax-portal/MiniMax-M3",
+      "minimax-portal/MiniMax-M3.1-Flash",
+    ]);
+  });
+
+  it("keeps modelPolicy unrestricted when allowlist is empty or missing", () => {
+    const empty = {
+      agents: { defaults: { modelPolicy: { allow: [] as string[] } } },
+    };
+    syncConfiguredModelPolicyAllow(empty, "openrouter", [model("gpt-4o")]);
+    expect(empty.agents.defaults.modelPolicy.allow).toEqual([]);
+
+    const missing = {};
+    syncConfiguredModelPolicyAllow(missing, "openrouter", [model("gpt-4o")]);
+    expect((missing as { agents?: unknown }).agents).toBeUndefined();
   });
 });

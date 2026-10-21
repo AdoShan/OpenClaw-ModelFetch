@@ -5,8 +5,10 @@ import {
   modelFetchConfigSchema,
   modelFetchParameters,
 } from "./model-fetch.js";
+import { registerModelFetchOperations } from "./operations.js";
+import type { ModelFetchConfig } from "./schemas.js";
 
-export default defineToolPlugin({
+const entry = defineToolPlugin({
   id: "model-fetch",
   name: "Model Fetch",
   description:
@@ -24,3 +26,13 @@ export default defineToolPlugin({
     }),
   ],
 });
+
+const registerTools = entry.register;
+entry.register = (api) => {
+  registerTools?.(api);
+  registerModelFetchOperations(api, {
+    factoryConfig: api.pluginConfig as ModelFetchConfig | undefined,
+  });
+};
+
+export default entry;

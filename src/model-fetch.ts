@@ -1,4 +1,4 @@
-import { Type, type Static, type TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import {
   fetchWithSsrFGuard,
   ssrfPolicyFromAllowPrivateNetwork,
@@ -6,18 +6,29 @@ import {
 import { readResponseWithLimit } from "openclaw/plugin-sdk/media-runtime";
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import type { AnyAgentTool, OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import {
+  modelFetchConfigSchema,
+  modelFetchFilterSchema,
+  modelFetchParameters,
+  modelFetchResultSchema,
+  type ModelFetchConfig,
+  type ModelFetchParams,
+  type ModelFetchToolResult,
+  type ModelFilterConfig,
+} from "./schemas.js";
 
 export const MODEL_FETCH_TOOL_NAME = "model_fetch";
 const CONFIG_PATH = "models.providers.<providerId>.models";
 const RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 
-export type ModelFilterConfig = {
-  includeRegex?: string;
-  excludeRegex?: string;
-  manualIds?: string[];
-  replace?: boolean;
+export {
+  modelFetchConfigSchema,
+  modelFetchFilterSchema,
+  modelFetchParameters,
+  modelFetchResultSchema,
 };
+export type { ModelFetchConfig, ModelFetchParams, ModelFetchToolResult, ModelFilterConfig };
 
 export type ModelDefinitionLike = {
   id: string;
@@ -36,6 +47,7 @@ export type ModelDefinitionLike = {
 };
 
 export type ProviderLike = {
+  name?: string;
   baseUrl: string;
   api?: string;
   request?: {
@@ -45,6 +57,13 @@ export type ProviderLike = {
 };
 
 type ConfigLike = {
+  agents?: {
+    defaults?: {
+      modelPolicy?: {
+        allow?: unknown;
+      };
+    };
+  };
   models?: {
     providers?: Record<string, ProviderLike | undefined>;
   };
@@ -62,82 +81,52 @@ type ConfigLike = {
 type GuardedFetchOptions = Parameters<typeof fetchWithSsrFGuard>[0];
 type GuardedFetchResult = Awaited<ReturnType<typeof fetchWithSsrFGuard>>;
 
-export type ModelFetchParams = {
-  provider: string;
-  includeRegex?: string;
-  excludeRegex?: string;
-  manualIds?: string[];
-  replace?: boolean;
-  dryRun?: boolean;
-};
+function toModelRef(providerId: string, modelId: string): string {
+  return `${providerId}/${modelId}`;
+}
 
-export const modelFetchParameters = Type.Object(
-  {
-    provider: Type.String({
-      description:
-        "Provider id from models.providers. Only this provider's configured filter is used.",
-    }),
-    includeRegex: Type.Optional(
-      Type.String({
-        description:
-          "Temporary include regex. When omitted, the provider's persisted includeRegex is used.",
-      }),
-    ),
-    excludeRegex: Type.Optional(
-      Type.String({
-        description:
-          "Temporary exclude regex. Manual IDs are never excluded. When omitted, the provider's persisted excludeRegex is used.",
-      }),
-    ),
-    manualIds: Type.Optional(
-      Type.Array(Type.String(), {
-        description:
-          "Temporary exact model IDs to select. Without includeRegex, only these IDs are selected; with includeRegex, they bypass include/exclude.",
-      }),
-    ),
-    replace: Type.Optional(
-      Type.Boolean({
-        description:
-          "Remove existing models absent from the selected fetched set. Defaults to the provider's persisted strategy.",
-      }),
-    ),
-    dryRun: Type.Optional(
-      Type.Boolean({
-        description: "Compute and return the planned model list without writing configuration.",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
+function normalizeAllowList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const ref = item.trim();
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
+    normalized.push(ref);
+  }
+  return normalized;
+}
 
-export const modelFetchFilterSchema = Type.Object(
-  {
-    includeRegex: Type.Optional(Type.String()),
-    excludeRegex: Type.Optional(Type.String()),
-    manualIds: Type.Optional(Type.Array(Type.String())),
-    replace: Type.Optional(Type.Boolean()),
-  },
-  { additionalProperties: false },
-);
+export function syncConfiguredModelPolicyAllow(
+  draft: unknown,
+  providerId: string,
+  models: ModelDefinitionLike[],
+): void {
+  const cfg = draft as ConfigLike;
+  const currentAllow = cfg.agents?.defaults?.modelPolicy?.allow;
+  if (!Array.isArray(currentAllow) || currentAllow.length === 0) {
+    return;
+  }
 
-export const modelFetchConfigSchema = Type.Object(
-  {
-    providers: Type.Optional(
-      Type.Record(
-        Type.String(),
-        Type.Object(
-          {
-            filter: Type.Optional(modelFetchFilterSchema),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    ),
-  },
-  { additionalProperties: false },
-);
+  const allow = normalizeAllowList(currentAllow);
+  const existing = new Set(allow);
+  let changed = false;
+  for (const model of models) {
+    const ref = toModelRef(providerId, model.id);
+    if (existing.has(ref)) continue;
+    existing.add(ref);
+    allow.push(ref);
+    changed = true;
+  }
 
-export type ModelFetchConfig = Static<typeof modelFetchConfigSchema>;
+  if (!changed) return;
+  cfg.agents ??= {};
+  cfg.agents.defaults ??= {};
+  cfg.agents.defaults.modelPolicy ??= {};
+  cfg.agents.defaults.modelPolicy.allow = allow;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -221,7 +210,9 @@ export function resolveEffectiveFilter(
     includeRegex: temporary.includeRegex ?? persisted.includeRegex,
     excludeRegex: temporary.excludeRegex ?? persisted.excludeRegex,
     manualIds: temporary.manualIds ?? persisted.manualIds,
-    replace: temporary.replace ?? persisted.replace ?? false,
+    // Default to replacement mode. Persisted legacy `replace: false` should not disable
+    // replacement unless the current tool call explicitly asks for additive mode.
+    replace: temporary.replace ?? true,
   };
 }
 
@@ -440,7 +431,7 @@ export async function fetchProviderModels({
   }
 }
 
-function getProvider(config: unknown, providerId: string): ProviderLike {
+export function getProvider(config: unknown, providerId: string): ProviderLike {
   const cfg = config as ConfigLike | undefined;
   const provider = cfg?.models?.providers?.[providerId];
   if (!provider) {
@@ -448,14 +439,20 @@ function getProvider(config: unknown, providerId: string): ProviderLike {
       `Provider "${providerId}" is not configured. Add it under models.providers before fetching models.`,
     );
   }
+  if (typeof provider.baseUrl !== "string" || !provider.baseUrl.trim()) {
+    throw new Error(`Provider "${providerId}" is missing a valid models.providers baseUrl.`);
+  }
   return provider;
 }
 
-function currentConfig(api: OpenClawPluginApi, toolContext: OpenClawPluginToolContext): unknown {
+function currentConfig(
+  api: OpenClawPluginApi,
+  toolContext?: OpenClawPluginToolContext,
+): unknown {
   return (
-    toolContext.getRuntimeConfig?.() ??
-    toolContext.runtimeConfig ??
-    toolContext.config ??
+    toolContext?.getRuntimeConfig?.() ??
+    toolContext?.runtimeConfig ??
+    toolContext?.config ??
     api.runtime.config.current()
   );
 }
@@ -479,7 +476,7 @@ type MutableRuntimeApi = {
   };
 };
 
-async function resolveApiKey(
+export async function resolveApiKey(
   api: OpenClawPluginApi,
   providerId: string,
   provider: ProviderLike,
@@ -493,18 +490,76 @@ async function resolveApiKey(
   return auth.apiKey;
 }
 
-export type ModelFetchToolResult = {
-  provider: string;
-  fetched: number;
-  selected: string[];
-  added: number;
-  unchanged: number;
-  removed: number;
-  replace: boolean;
-  dryRun: boolean;
-  configPath: string;
-  persisted: boolean;
-};
+export async function runModelFetch({
+  api,
+  toolContext,
+  factoryConfig,
+  fetchModels = fetchProviderModels,
+  params,
+  signal,
+}: {
+  api: OpenClawPluginApi;
+  toolContext?: OpenClawPluginToolContext;
+  factoryConfig?: ModelFetchConfig;
+  fetchModels?: typeof fetchProviderModels;
+  params: ModelFetchParams;
+  signal?: AbortSignal;
+}): Promise<ModelFetchToolResult> {
+  const providerId = params.provider.trim();
+  if (!providerId) throw new Error("Provider id is required.");
+
+  const config = currentConfig(api, toolContext);
+  const provider = getProvider(config, providerId);
+  const persistedFilter = resolveProviderFilter(providerId, config, factoryConfig);
+  const effectiveFilter = resolveEffectiveFilter(persistedFilter, params);
+  const apiKey = await resolveApiKey(api, providerId, provider, config);
+  const fetched = await fetchModels({
+    providerId,
+    provider,
+    apiKey,
+    signal,
+  });
+  const selected = selectFetchedModels(fetched, effectiveFilter);
+  const merge = mergeModels({
+    existing: provider.models ?? [],
+    selected,
+    filter: effectiveFilter,
+  });
+
+  let persisted = false;
+  let configPath = CONFIG_PATH;
+  if (!params.dryRun) {
+    const runtime = (api as unknown as MutableRuntimeApi).runtime;
+    const result = await runtime.config.mutateConfigFile({
+      base: "source",
+      afterWrite: { mode: "auto" },
+      mutate: (draft) => {
+        const cfg = draft as ConfigLike;
+        cfg.models ??= {};
+        cfg.models.providers ??= {};
+        const target = cfg.models.providers[providerId] ?? { ...provider };
+        target.models = merge.models;
+        cfg.models.providers[providerId] = target;
+        syncConfiguredModelPolicyAllow(cfg, providerId, merge.models);
+      },
+    });
+    configPath = result.path;
+    persisted = true;
+  }
+
+  return {
+    provider: providerId,
+    fetched: fetched.length,
+    selected: merge.selectedIds,
+    added: merge.added,
+    unchanged: merge.unchanged,
+    removed: merge.removed,
+    replace: effectiveFilter.replace === true,
+    dryRun: params.dryRun === true,
+    configPath,
+    persisted,
+  };
+}
 
 export function createModelFetchTool({
   api,
@@ -525,60 +580,16 @@ export function createModelFetchTool({
     parameters: modelFetchParameters as TSchema,
     resultContentSource: "network",
     execute: async (_toolCallId, params: ModelFetchParams, signal?: AbortSignal) => {
-      const providerId = params.provider.trim();
-      if (!providerId) throw new Error("Provider id is required.");
-
-      const config = currentConfig(api, toolContext);
-      const provider = getProvider(config, providerId);
-      const persistedFilter = resolveProviderFilter(providerId, config, factoryConfig);
-      const effectiveFilter = resolveEffectiveFilter(persistedFilter, params);
-      const apiKey = await resolveApiKey(api, providerId, provider, config);
-      const fetched = await fetchModels({
-        providerId,
-        provider,
-        apiKey,
-        signal,
-      });
-      const selected = selectFetchedModels(fetched, effectiveFilter);
-      const merge = mergeModels({
-        existing: provider.models ?? [],
-        selected,
-        filter: effectiveFilter,
-      });
-
-      let persisted = false;
-      let configPath = CONFIG_PATH;
-      if (!params.dryRun) {
-        const runtime = (api as unknown as MutableRuntimeApi).runtime;
-        const result = await runtime.config.mutateConfigFile({
-          base: "source",
-          afterWrite: { mode: "auto" },
-          mutate: (draft) => {
-            const cfg = draft as ConfigLike;
-            cfg.models ??= {};
-            cfg.models.providers ??= {};
-            const target = cfg.models.providers[providerId] ?? { ...provider };
-            target.models = merge.models;
-            cfg.models.providers[providerId] = target;
-          },
-        });
-        configPath = result.path;
-        persisted = true;
-      }
-
-      const payload: ModelFetchToolResult = {
-        provider: providerId,
-        fetched: fetched.length,
-        selected: merge.selectedIds,
-        added: merge.added,
-        unchanged: merge.unchanged,
-        removed: merge.removed,
-        replace: effectiveFilter.replace === true,
-        dryRun: params.dryRun === true,
-        configPath,
-        persisted,
-      };
-      return jsonResult(payload);
+      return jsonResult(
+        await runModelFetch({
+          api,
+          toolContext,
+          factoryConfig,
+          fetchModels,
+          params,
+          signal,
+        }),
+      );
     },
   };
 }

@@ -1,0 +1,1470 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Fetch 设置界面</title>
+  <style>
+    :root {
+      --bg: #f4f6f7;
+      --surface: #ffffff;
+      --surface-muted: #f8faf9;
+      --text: #1b2429;
+      --muted: #627078;
+      --border: #d9e0e3;
+      --border-strong: #bcc8cc;
+      --accent: #176b62;
+      --accent-soft: #e7f2f0;
+      --accent-contrast: #ffffff;
+      --warning: #9a5b0a;
+      --warning-soft: #fff4dd;
+      --danger: #b33a3a;
+      --danger-soft: #fcecec;
+      --success: #256d45;
+      --success-soft: #e9f5ee;
+      --info: #315f8a;
+      --info-soft: #eaf1f8;
+      --shadow: 0 8px 24px rgba(27, 36, 41, 0.08);
+      --radius: 8px;
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+    }
+
+    .workspace {
+      min-width: 0;
+      width: 100%;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 28px 30px 108px;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 18px;
+    }
+
+    .page-heading {
+      min-width: 0;
+    }
+
+    .page-tools {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .provider-picker {
+      display: grid;
+      gap: 5px;
+      min-width: 178px;
+    }
+
+    .provider-picker > span {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .provider-select {
+      min-height: 34px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 5px 30px 5px 10px;
+      font-weight: 600;
+      outline: none;
+    }
+
+    .provider-select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(23, 107, 98, 0.12);
+    }
+
+    .provider-meta {
+      margin-top: 7px;
+      display: grid;
+      justify-items: end;
+      gap: 5px;
+    }
+
+    .config-path {
+      max-width: 300px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+      text-align: right;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+
+    h1 {
+      font-size: 25px;
+      font-weight: 650;
+    }
+
+    h2 {
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .subhead {
+      margin: 6px 0 0;
+      color: var(--muted);
+      max-width: 650px;
+    }
+
+    .health {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .health-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    .summary-band {
+      min-height: 66px;
+      display: flex;
+      align-items: stretch;
+      margin-bottom: 18px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .summary-item {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+    }
+
+    .summary-item + .summary-item {
+      border-left: 1px solid var(--border);
+    }
+
+    .summary-item span {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .summary-item strong {
+      font-size: 18px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .summary-item small {
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .summary-action {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      padding: 9px 12px;
+      border-left: 1px solid var(--border);
+      background: var(--surface-muted);
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .panel + .panel {
+      margin-top: 18px;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .panel-head-actions {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .strategy-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      padding: 18px 20px 0;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .field label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .field label span {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    .field input:focus,
+    .field select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(23, 107, 98, 0.12);
+    }
+
+    .field input[aria-invalid="true"] {
+      border-color: var(--danger);
+    }
+
+    .field-note {
+      min-height: 16px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .field-note.error {
+      color: var(--danger);
+    }
+
+    .strategy-lower {
+      display: grid;
+      gap: 12px;
+      padding: 18px 20px 20px;
+    }
+
+    .whitelist-block {
+      min-width: 0;
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 7px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .count-badge {
+      min-width: 22px;
+      height: 20px;
+      padding: 0 7px;
+      border-radius: 999px;
+      display: inline-grid;
+      place-items: center;
+      background: var(--info-soft);
+      color: var(--info);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .whitelist-box {
+      min-height: 50px;
+      border: 1px dashed var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface-muted);
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
+      gap: 6px;
+    }
+
+    .whitelist-empty {
+      color: var(--muted);
+      padding: 7px 4px;
+      font-size: 12px;
+    }
+
+    .chip {
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: 100%;
+      border: 1px solid #c7d9d5;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 0 5px 0 9px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .chip span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chip button {
+      width: 19px;
+      height: 19px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--accent);
+      display: grid;
+      place-items: center;
+      line-height: 1;
+      font-size: 14px;
+    }
+
+    .chip button:hover {
+      background: rgba(23, 107, 98, 0.12);
+    }
+
+    .replacement-note {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      border: 1px solid #edd5ab;
+      border-radius: 6px;
+      background: var(--warning-soft);
+      padding: 10px 12px;
+      color: #6d4a15;
+      font-size: 11px;
+    }
+
+    .replacement-note::before {
+      content: "!";
+      flex: 0 0 auto;
+      width: 17px;
+      height: 17px;
+      border: 1px solid #c68a2c;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: var(--warning);
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .replacement-note strong {
+      display: block;
+      margin-bottom: 1px;
+      color: #5b3c0d;
+      font-size: 12px;
+    }
+
+    .panel-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      position: relative;
+      min-width: 210px;
+    }
+
+    .search-box input {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 6px 10px 6px 30px;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(23, 107, 98, 0.12);
+    }
+
+    .search-box::before {
+      content: "";
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 11px;
+      height: 11px;
+      border: 1.5px solid var(--muted);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .search-box::after {
+      content: "";
+      position: absolute;
+      left: 20px;
+      top: 21px;
+      width: 5px;
+      height: 1.5px;
+      background: var(--muted);
+      transform: rotate(45deg);
+      pointer-events: none;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 690px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px 14px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover {
+      background: #fbfcfc;
+    }
+
+    .check-cell {
+      width: 48px;
+      text-align: center;
+    }
+
+    .model-check {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .model-id {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .model-name,
+    .model-context {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .model-context {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border-radius: 999px;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge[hidden] {
+      display: none;
+    }
+
+    .badge.selected {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .badge.whitelist {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .badge.excluded {
+      background: #eef1f2;
+      color: var(--muted);
+    }
+
+    .badge.removed {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .empty-state {
+      padding: 36px 18px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .action-bar {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 13px max(30px, calc((100vw - 1080px) / 2 + 30px));
+      border-top: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(8px);
+    }
+
+    .save-state {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .save-state.dirty {
+      color: var(--warning);
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .button {
+      min-height: 36px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 14px;
+      font-weight: 600;
+    }
+
+    .button:hover:not(:disabled) {
+      background: var(--surface-muted);
+    }
+
+    .button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--accent-contrast);
+    }
+
+    .button.primary:hover:not(:disabled) {
+      background: #125a52;
+    }
+
+    .button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .button.small {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
+
+    .button.primary.is-busy {
+      opacity: 1;
+      cursor: wait;
+    }
+
+    dialog {
+      width: min(560px, calc(100vw - 32px));
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0;
+      color: var(--text);
+      background: var(--surface);
+      box-shadow: 0 24px 64px rgba(27, 36, 41, 0.22);
+    }
+
+    dialog::backdrop {
+      background: rgba(27, 36, 41, 0.48);
+    }
+
+    .dialog-head {
+      padding: 19px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dialog-head h3 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 650;
+    }
+
+    .dialog-head p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dialog-body {
+      padding: 16px 20px;
+    }
+
+    .dialog-body p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .delete-list {
+      max-height: 230px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--danger-soft);
+      padding: 7px;
+      display: grid;
+      gap: 2px;
+    }
+
+    .delete-list code {
+      padding: 6px 7px;
+      color: var(--danger);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 13px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .button.danger {
+      border-color: var(--danger);
+      background: var(--danger);
+      color: #ffffff;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 74px;
+      z-index: 20;
+      transform: translate(-50%, 14px);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #243137;
+      color: #ffffff;
+      box-shadow: var(--shadow);
+      padding: 9px 13px;
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    @media (max-width: 900px) {
+      .workspace {
+        padding: 22px 18px 112px;
+      }
+
+      .action-bar {
+        padding: 12px 18px;
+      }
+
+      .summary-item {
+        padding: 9px 12px;
+      }
+
+      .summary-item small {
+        display: none;
+      }
+
+      .summary-item:nth-child(4) small {
+        display: inline;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .page-header {
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .page-tools {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .summary-band {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .summary-item:nth-child(3) {
+        border-left: 0;
+        border-top: 1px solid var(--border);
+      }
+
+      .summary-item:nth-child(4) {
+        border-top: 1px solid var(--border);
+      }
+
+      .strategy-grid,
+      .strategy-lower {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-head {
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .panel-head-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
+
+      .panel-toolbar {
+        width: 100%;
+      }
+
+      .search-box {
+        min-width: 0;
+        width: 100%;
+      }
+
+      .action-bar {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .actions {
+        width: 100%;
+      }
+
+      .actions .button {
+        flex: 1;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .page-tools {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .provider-picker {
+        min-width: 0;
+      }
+
+      .provider-meta {
+        justify-items: start;
+      }
+
+      .config-path {
+        text-align: left;
+      }
+
+      .summary-action {
+        grid-column: 1 / -1;
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-end;
+        border-top: 1px solid var(--border);
+        border-left: 0;
+      }
+
+      .summary-action .button {
+        flex: 1;
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <main class="workspace">
+      <header class="page-header">
+        <div class="page-heading">
+          <p class="eyebrow">模型发现与筛选</p>
+          <h1 id="pageTitle">OpenRouter</h1>
+          <p class="subhead" id="pageSubhead">获取远端模型，按 Provider 独立保存筛选策略，再把已选模型应用到 OpenClaw 配置。</p>
+        </div>
+        <div class="page-tools">
+          <label class="provider-picker">
+            <span>当前 Provider</span>
+            <select class="provider-select" id="providerSelect" aria-label="选择 Provider"></select>
+          </label>
+          <div class="provider-meta">
+            <div class="health"><span class="health-dot"></span><span id="healthText">已配置</span></div>
+            <code class="config-path" id="configPath">models.providers.openrouter.models</code>
+          </div>
+        </div>
+      </header>
+
+      <section class="summary-band" aria-label="模型统计">
+        <div class="summary-item">
+          <span>远端</span>
+          <strong id="remoteCount">0</strong>
+          <small id="fetchAge">最近获取</small>
+        </div>
+        <div class="summary-item">
+          <span>已选</span>
+          <strong id="selectedCount">0</strong>
+          <small>正则与白名单</small>
+        </div>
+        <div class="summary-item">
+          <span>已配置</span>
+          <strong id="configuredCount">0</strong>
+          <small>当前 Provider</small>
+        </div>
+        <div class="summary-item">
+          <span>变更</span>
+          <strong id="changeCount">0</strong>
+          <small id="changeDetail">新增 0 · 删除 0</small>
+        </div>
+        <div class="summary-action">
+          <button class="button small" id="fetchButton" type="button">获取远端模型</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="strategyTitle">
+        <div class="panel-head">
+          <div>
+            <h2 id="strategyTitle">筛选策略</h2>
+            <p>策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；正则输入框失去焦点后更新结果。</p>
+          </div>
+          <div class="panel-head-actions">
+            <span class="badge whitelist" id="dirtyBadge" hidden>未保存</span>
+            <button class="button small" id="saveButton" type="button" disabled>保存策略</button>
+          </div>
+        </div>
+
+        <div class="strategy-grid">
+          <div class="field">
+            <label for="includeRegex">包含正则 <span>includeRegex</span></label>
+            <input id="includeRegex" type="text" spellcheck="false" placeholder="例如 ^(openai|anthropic)/">
+            <div class="field-note" id="includeNote">留空时不按正则限制；若白名单也为空则选择全部模型。</div>
+          </div>
+          <div class="field">
+            <label for="excludeRegex">排除正则 <span>excludeRegex</span></label>
+            <input id="excludeRegex" type="text" spellcheck="false" placeholder="例如 (embed|rerank)">
+            <div class="field-note" id="excludeNote">白名单中的模型不会被排除。</div>
+          </div>
+        </div>
+
+        <div class="strategy-lower">
+          <div class="whitelist-block">
+            <div class="section-label">
+              <span>白名单</span>
+              <span class="count-badge" id="whitelistCount">0</span>
+            </div>
+            <div class="whitelist-box" id="whitelistBox"></div>
+          </div>
+          <div class="replacement-note">
+            <div>
+              <strong>默认替换 Provider 模型列表</strong>
+              应用策略时会删除未选中的已有模型；删除前将列出模型 ID 并要求再次确认。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="modelsTitle">
+        <div class="panel-head">
+          <div>
+            <h2 id="modelsTitle">模型列表</h2>
+            <p>勾选模型会写入 manualIds 白名单；取消勾选只移除白名单，不改变正则策略。</p>
+          </div>
+          <div class="panel-toolbar">
+            <label class="search-box">
+              <span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">搜索模型</span>
+              <input id="modelSearch" type="search" placeholder="搜索模型 ID 或名称">
+            </label>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="check-cell">白名单</th>
+                <th>模型 ID</th>
+                <th>名称</th>
+                <th>上下文</th>
+                <th>筛选结果</th>
+              </tr>
+            </thead>
+            <tbody id="modelRows"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="emptyState" hidden>没有匹配的模型</div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="action-bar">
+    <div class="save-state" id="saveState">所有策略已保存</div>
+    <div class="actions">
+      <button class="button primary" id="applyButton" type="button" title="将已保存的筛选结果写入 OpenClaw 配置">应用策略到配置</button>
+    </div>
+  </footer>
+
+  <dialog id="deleteDialog" aria-labelledby="deleteDialogTitle">
+    <div class="dialog-head">
+      <h3 id="deleteDialogTitle">确认删除未选中的模型</h3>
+      <p id="deleteDialogDescription">应用策略会替换当前 Provider 的模型列表。</p>
+    </div>
+    <div class="dialog-body">
+      <p>请确认要移除的模型：</p>
+      <div class="delete-list" id="deleteList"></div>
+    </div>
+    <div class="dialog-actions">
+      <button class="button" id="cancelDelete" type="button">取消</button>
+      <button class="button danger" id="confirmDelete" type="button">确认应用并删除</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const providers = {
+      openrouter: {
+        name: "OpenRouter",
+        api: "openai-responses",
+        baseUrl: "https://openrouter.ai/api/v1",
+        saved: {
+          includeRegex: "^(openai|anthropic)/",
+          excludeRegex: "(embed|rerank)",
+          manualIds: ["openai/gpt-4o-mini"],
+          replace: true
+        },
+        configured: [
+          "openai/gpt-4o",
+          "openai/gpt-4o-mini",
+          "anthropic/claude-3.5-sonnet",
+          "meta-llama/llama-3.3-70b-instruct"
+        ],
+        lastFetchedAt: new Date(),
+        models: [
+          { id: "openai/gpt-4o", name: "GPT-4o", context: 128000 },
+          { id: "openai/gpt-4o-mini", name: "GPT-4o mini", context: 128000 },
+          { id: "openai/o3-mini", name: "o3-mini", context: 200000 },
+          { id: "openai/text-embedding-3-large", name: "Embedding 3 Large", context: 8191 },
+          { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet", context: 200000 },
+          { id: "anthropic/claude-3.7-sonnet", name: "Claude 3.7 Sonnet", context: 200000 },
+          { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", context: 1048576 },
+          { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B", context: 131072 }
+        ]
+      }
+    };
+
+    const state = {
+      currentId: "openrouter",
+      draft: null,
+      dirty: false,
+      search: "",
+      fetching: false
+    };
+
+    const el = {
+      providerSelect: document.getElementById("providerSelect"),
+      configPath: document.getElementById("configPath"),
+      pageTitle: document.getElementById("pageTitle"),
+      pageSubhead: document.getElementById("pageSubhead"),
+      healthText: document.getElementById("healthText"),
+      remoteCount: document.getElementById("remoteCount"),
+      fetchAge: document.getElementById("fetchAge"),
+      selectedCount: document.getElementById("selectedCount"),
+      configuredCount: document.getElementById("configuredCount"),
+      changeCount: document.getElementById("changeCount"),
+      changeDetail: document.getElementById("changeDetail"),
+      dirtyBadge: document.getElementById("dirtyBadge"),
+      includeRegex: document.getElementById("includeRegex"),
+      excludeRegex: document.getElementById("excludeRegex"),
+      includeNote: document.getElementById("includeNote"),
+      excludeNote: document.getElementById("excludeNote"),
+      whitelistBox: document.getElementById("whitelistBox"),
+      whitelistCount: document.getElementById("whitelistCount"),
+      modelSearch: document.getElementById("modelSearch"),
+      modelRows: document.getElementById("modelRows"),
+      emptyState: document.getElementById("emptyState"),
+      saveState: document.getElementById("saveState"),
+      saveButton: document.getElementById("saveButton"),
+      fetchButton: document.getElementById("fetchButton"),
+      applyButton: document.getElementById("applyButton"),
+      deleteDialog: document.getElementById("deleteDialog"),
+      deleteDialogTitle: document.getElementById("deleteDialogTitle"),
+      deleteDialogDescription: document.getElementById("deleteDialogDescription"),
+      deleteList: document.getElementById("deleteList"),
+      cancelDelete: document.getElementById("cancelDelete"),
+      confirmDelete: document.getElementById("confirmDelete"),
+      toast: document.getElementById("toast")
+    };
+
+    function provider() {
+      return providers[state.currentId];
+    }
+
+    function clone(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function compileRegex(value, fieldName) {
+      if (!value) return { regex: null, error: "" };
+      try {
+        return { regex: new RegExp(value), error: "" };
+      } catch (error) {
+        return { regex: null, error: `${fieldName}格式错误：${error.message}` };
+      }
+    }
+
+    function regexError(config) {
+      const include = compileRegex(config.includeRegex, "包含正则");
+      const exclude = compileRegex(config.excludeRegex, "排除正则");
+      return include.error || exclude.error || "";
+    }
+
+    function selectionFor(config) {
+      const include = compileRegex(config.includeRegex, "包含正则");
+      const exclude = compileRegex(config.excludeRegex, "排除正则");
+      const whitelist = new Set(config.manualIds);
+      const ids = new Set();
+      if (include.error || exclude.error) return ids;
+
+      for (const model of provider().models) {
+        const manuallySelected = whitelist.has(model.id);
+        if (!config.includeRegex && whitelist.size > 0) {
+          if (manuallySelected) ids.add(model.id);
+          continue;
+        }
+        const included = !include.regex || include.regex.test(model.id);
+        const excluded = exclude.regex ? exclude.regex.test(model.id) : false;
+        if (manuallySelected || (included && !excluded)) ids.add(model.id);
+      }
+      return ids;
+    }
+
+    function calculateChanges(config) {
+      const selected = selectionFor(config);
+      const configured = new Set(provider().configured);
+      const added = [...selected].filter((id) => !configured.has(id));
+      const removed = provider().configured.filter((id) => !selected.has(id));
+      return { selected, added, removed };
+    }
+
+    function updateActionState() {
+      const error = regexError(state.draft);
+      el.fetchButton.disabled = state.fetching;
+      el.fetchButton.textContent = state.fetching ? "正在获取..." : "获取远端模型";
+      el.applyButton.disabled = state.dirty || Boolean(error) || provider().models.length === 0;
+
+      if (state.dirty) {
+        el.applyButton.title = "请先保存当前筛选策略";
+      } else if (error) {
+        el.applyButton.title = "请先修正正则表达式";
+      } else {
+        el.applyButton.title = "将已保存的筛选结果写入 OpenClaw 配置；删除前会再次确认";
+      }
+    }
+
+    function setDirty(value) {
+      state.dirty = value;
+      el.dirtyBadge.hidden = !value;
+      el.saveState.classList.toggle("dirty", value);
+      el.saveState.textContent = value
+        ? "有未保存的筛选策略，保存后才能应用"
+        : "策略已保存；替换模式已启用";
+      el.saveButton.disabled = !value;
+      updateActionState();
+    }
+
+    function showToast(message) {
+      el.toast.textContent = message;
+      el.toast.classList.add("visible");
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => el.toast.classList.remove("visible"), 2200);
+    }
+
+    function formatFetchAge(date) {
+      if (!date) return "尚未获取";
+      const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+      if (seconds < 60) return "刚刚获取";
+      if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+      return `${Math.floor(seconds / 3600)} 小时前`;
+    }
+
+    function openDeleteDialog(removed) {
+      el.deleteDialogTitle.textContent = `确认删除 ${removed.length} 个模型`;
+      el.deleteDialogDescription.textContent =
+        `应用后，${provider().name} 配置中的以下模型将被移除。`;
+      el.deleteList.innerHTML = "";
+      for (const id of removed) {
+        const code = document.createElement("code");
+        code.textContent = id;
+        el.deleteList.append(code);
+      }
+      el.deleteDialog.showModal();
+    }
+
+    function renderProviders() {
+      el.providerSelect.innerHTML = "";
+      for (const [id, item] of Object.entries(providers)) {
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = item.name;
+        el.providerSelect.append(option);
+      }
+      el.providerSelect.value = state.currentId;
+    }
+
+    function renderWhitelist() {
+      el.whitelistBox.innerHTML = "";
+      el.whitelistCount.textContent = String(state.draft.manualIds.length);
+      if (state.draft.manualIds.length === 0) {
+        const empty = document.createElement("span");
+        empty.className = "whitelist-empty";
+        empty.textContent = "尚未选择手动白名单模型";
+        el.whitelistBox.append(empty);
+        return;
+      }
+
+      for (const id of state.draft.manualIds) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        const text = document.createElement("span");
+        text.textContent = id;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.setAttribute("aria-label", `从白名单移除 ${id}`);
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          state.draft.manualIds = state.draft.manualIds.filter((item) => item !== id);
+          setDirty(true);
+          render();
+        });
+        chip.append(text, remove);
+        el.whitelistBox.append(chip);
+      }
+    }
+
+    function renderSummary(changes) {
+      el.remoteCount.textContent = String(provider().models.length);
+      el.fetchAge.textContent = formatFetchAge(provider().lastFetchedAt);
+      el.selectedCount.textContent = String(changes.selected.size);
+      el.configuredCount.textContent = String(provider().configured.length);
+      el.changeCount.textContent = String(changes.added.length + changes.removed.length);
+      el.changeDetail.textContent = `新增 ${changes.added.length} · 删除 ${changes.removed.length}`;
+    }
+
+    function renderModels(changes) {
+      el.modelRows.innerHTML = "";
+      const search = state.search.trim().toLowerCase();
+      const currentError = regexError(state.draft);
+      const models = provider().models.filter((model) => {
+        if (!search) return true;
+        return `${model.id} ${model.name}`.toLowerCase().includes(search);
+      });
+
+      el.emptyState.hidden = models.length !== 0;
+      for (const model of models) {
+        const row = document.createElement("tr");
+
+        const checkCell = document.createElement("td");
+        checkCell.className = "check-cell";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "model-check";
+        checkbox.checked = state.draft.manualIds.includes(model.id);
+        checkbox.setAttribute("aria-label", `将 ${model.id} 加入白名单`);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) {
+            if (!state.draft.manualIds.includes(model.id)) state.draft.manualIds.push(model.id);
+          } else {
+            state.draft.manualIds = state.draft.manualIds.filter((id) => id !== model.id);
+          }
+          setDirty(true);
+          render();
+        });
+        checkCell.append(checkbox);
+
+        const idCell = document.createElement("td");
+        idCell.className = "model-id";
+        idCell.textContent = model.id;
+
+        const nameCell = document.createElement("td");
+        nameCell.className = "model-name";
+        nameCell.textContent = model.name;
+
+        const contextCell = document.createElement("td");
+        contextCell.className = "model-context";
+        contextCell.textContent = model.context.toLocaleString("zh-CN");
+
+        const resultCell = document.createElement("td");
+        const badge = document.createElement("span");
+        const isWhitelist = state.draft.manualIds.includes(model.id);
+        const isRemoved = provider().configured.includes(model.id) && !changes.selected.has(model.id);
+        if (currentError && provider().configured.includes(model.id) && !isWhitelist) {
+          badge.className = "badge removed";
+          badge.textContent = "等待修正正则";
+        } else if (isRemoved) {
+          badge.className = "badge removed";
+          badge.textContent = "将删除";
+        } else if (isWhitelist) {
+          badge.className = "badge whitelist";
+          badge.textContent = "白名单";
+        } else if (changes.selected.has(model.id)) {
+          badge.className = "badge selected";
+          badge.textContent = "已选择";
+        } else {
+          badge.className = "badge excluded";
+          badge.textContent = "未选中";
+        }
+        resultCell.append(badge);
+
+        row.append(checkCell, idCell, nameCell, contextCell, resultCell);
+        el.modelRows.append(row);
+      }
+    }
+
+    function render() {
+      const include = compileRegex(state.draft.includeRegex, "包含正则");
+      const exclude = compileRegex(state.draft.excludeRegex, "排除正则");
+      el.includeRegex.value = state.draft.includeRegex;
+      el.excludeRegex.value = state.draft.excludeRegex;
+      el.includeRegex.setAttribute("aria-invalid", String(Boolean(include.error)));
+      el.excludeRegex.setAttribute("aria-invalid", String(Boolean(exclude.error)));
+      el.includeNote.textContent = include.error || "留空时不按正则限制；若白名单也为空则选择全部模型。";
+      el.includeNote.classList.toggle("error", Boolean(include.error));
+      el.excludeNote.textContent = exclude.error || "白名单中的模型不会被排除。";
+      el.excludeNote.classList.toggle("error", Boolean(exclude.error));
+
+      el.pageTitle.textContent = provider().name;
+      el.configPath.textContent = `models.providers.${state.currentId}.models`;
+      el.healthText.textContent = `${provider().api} · 已配置`;
+
+      const changes = calculateChanges(state.draft);
+      renderWhitelist();
+      renderSummary(changes);
+      renderModels(changes);
+      updateActionState();
+    }
+
+    function switchProvider(id) {
+      if (id === state.currentId) return;
+      state.currentId = id;
+      state.draft = clone(provider().saved);
+      state.search = "";
+      el.modelSearch.value = "";
+      setDirty(false);
+      renderProviders();
+      render();
+    }
+
+    function saveStrategy() {
+      const error = regexError(state.draft);
+      if (error) {
+        showToast("请先修正正则表达式");
+        return;
+      }
+      state.draft.replace = true;
+      provider().saved = clone(state.draft);
+      setDirty(false);
+      render();
+      showToast(`${provider().name} 的筛选策略已保存`);
+    }
+
+    function fetchRemoteModels() {
+      if (state.fetching) return;
+      state.fetching = true;
+      updateActionState();
+      window.setTimeout(() => {
+        provider().lastFetchedAt = new Date();
+        state.fetching = false;
+        render();
+        showToast(`已获取 ${provider().models.length} 个远端模型，OpenClaw 配置未改变`);
+      }, 550);
+    }
+
+    function finishApply(changes) {
+      provider().configured = [...changes.selected];
+      state.draft = clone(provider().saved);
+      setDirty(false);
+      render();
+      showToast(`已将 ${changes.selected.size} 个模型应用到 ${provider().name} 配置`);
+    }
+
+    function applyStrategy() {
+      if (state.dirty) {
+        showToast("请先保存当前筛选策略");
+        return;
+      }
+      const error = regexError(provider().saved);
+      if (error) {
+        showToast("已保存的策略包含无效正则，请先修正");
+        return;
+      }
+      const changes = calculateChanges(provider().saved);
+      if (changes.removed.length > 0) {
+        openDeleteDialog(changes.removed);
+        return;
+      }
+      finishApply(changes);
+    }
+
+    function commitRegex(input, key) {
+      const next = input.value;
+      if (next === state.draft[key]) return;
+      state.draft[key] = next;
+      setDirty(true);
+      render();
+    }
+
+    function handleRegexKeydown(event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+
+    el.includeRegex.addEventListener("blur", (event) => commitRegex(event.currentTarget, "includeRegex"));
+    el.excludeRegex.addEventListener("blur", (event) => commitRegex(event.currentTarget, "excludeRegex"));
+    el.includeRegex.addEventListener("keydown", handleRegexKeydown);
+    el.excludeRegex.addEventListener("keydown", handleRegexKeydown);
+
+    el.modelSearch.addEventListener("input", (event) => {
+      state.search = event.target.value;
+      render();
+    });
+
+    el.providerSelect.addEventListener("change", (event) => switchProvider(event.target.value));
+    el.saveButton.addEventListener("click", saveStrategy);
+    el.fetchButton.addEventListener("click", fetchRemoteModels);
+    el.applyButton.addEventListener("click", applyStrategy);
+
+    el.cancelDelete.addEventListener("click", () => el.deleteDialog.close());
+    el.confirmDelete.addEventListener("click", () => {
+      el.deleteDialog.close();
+      finishApply(calculateChanges(provider().saved));
+    });
+
+    state.draft = clone(provider().saved);
+    renderProviders();
+    setDirty(false);
+    render();
+  </script>
+</body>
+</html>
