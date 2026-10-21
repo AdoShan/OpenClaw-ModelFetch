@@ -328,6 +328,52 @@ describe("Control UI operations", () => {
     ]);
   });
 
+  it("adds applied models to agent modelPolicy.allow for matching provider rules", async () => {
+    const { api, getConfig } = createApi(
+      {
+        agents: {
+          entries: {
+            main: {
+              modelPolicy: {
+                allow: ["openrouter/openai/gpt-oss-120b:free", "minimax-portal/MiniMax-M3"],
+              },
+            },
+          },
+        },
+        ...baseConfig(
+          {
+            "minimax-portal": {
+              baseUrl: "https://api.minimax.chat/v1",
+              api: "openai-responses",
+              models: [model("MiniMax-M3")],
+            },
+          },
+          {
+            "minimax-portal": {
+              filter: { manualIds: ["MiniMax-M3", "MiniMax-M3.1-Flash"] },
+            },
+          },
+        ),
+      },
+    );
+
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("MiniMax-M3"), model("MiniMax-M3.1-Flash")]),
+    });
+
+    const preview = await operations.previewApply("minimax-portal");
+    await operations.applyStrategy({
+      provider: "minimax-portal",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: [],
+    });
+
+    expect(getConfig().agents?.entries?.main?.modelPolicy?.allow).toContain(
+      "minimax-portal/MiniMax-M3.1-Flash",
+    );
+  });
+
   it("refuses a stale confirmation when the remote list changes", async () => {
     const { api, mutateConfigFile } = createApi(
       baseConfig({

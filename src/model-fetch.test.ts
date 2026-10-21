@@ -393,4 +393,44 @@ describe("tool execution", () => {
     syncConfiguredModelPolicyAllow(missing, "openrouter", [model("gpt-4o")]);
     expect((missing as { agents?: unknown }).agents).toBeUndefined();
   });
+
+  it("syncs agent-level allowlists that already scope the provider", () => {
+    const config = {
+      agents: {
+        defaults: {
+          modelPolicy: {
+            allow: ["openrouter/openai/gpt-oss-120b:free", "minimax-portal/MiniMax-M3"],
+          },
+        },
+        entries: {
+          main: {
+            modelPolicy: {
+              allow: [
+                "openrouter/openai/gpt-oss-120b:free",
+                "minimax-portal/MiniMax-M3",
+              ],
+            },
+          },
+          worker: {
+            modelPolicy: {
+              allow: ["openrouter/*"],
+            },
+          },
+        },
+      },
+    };
+
+    syncConfiguredModelPolicyAllow(config, "minimax-portal", [
+      model("MiniMax-M3"),
+      model("MiniMax-M3.1-Flash"),
+    ]);
+
+    expect(config.agents.defaults.modelPolicy.allow).toContain(
+      "minimax-portal/MiniMax-M3.1-Flash",
+    );
+    expect(config.agents.entries.main.modelPolicy.allow).toContain(
+      "minimax-portal/MiniMax-M3.1-Flash",
+    );
+    expect(config.agents.entries.worker.modelPolicy.allow).toEqual(["openrouter/*"]);
+  });
 });

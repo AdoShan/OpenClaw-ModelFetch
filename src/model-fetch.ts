@@ -63,6 +63,15 @@ type ConfigLike = {
         allow?: unknown;
       };
     };
+    entries?: Record<
+      string,
+      | {
+          modelPolicy?: {
+            allow?: unknown;
+          };
+        }
+      | undefined
+    >;
   };
   models?: {
     providers?: Record<string, ProviderLike | undefined>;
@@ -99,33 +108,70 @@ function normalizeAllowList(value: unknown): string[] {
   return normalized;
 }
 
+function hasProviderScopedRule(allow: readonly string[], providerId: string): boolean {
+  const prefix = `${providerId}/`;
+  const wildcard = `${providerId}/*`;
+  return allow.some((ref) => ref === wildcard || ref.startsWith(prefix));
+}
+
+function appendModelRefs(
+  allowValue: unknown,
+  modelRefs: readonly string[],
+): { changed: boolean; next?: string[] } {
+  if (!Array.isArray(allowValue) || allowValue.length === 0) {
+    return { changed: false };
+  }
+
+  const next = normalizeAllowList(allowValue);
+  const existing = new Set(next);
+  let changed = false;
+  for (const ref of modelRefs) {
+    if (existing.has(ref)) continue;
+    existing.add(ref);
+    next.push(ref);
+    changed = true;
+  }
+
+  return changed ? { changed: true, next } : { changed: false };
+}
+
 export function syncConfiguredModelPolicyAllow(
   draft: unknown,
   providerId: string,
   models: ModelDefinitionLike[],
 ): void {
   const cfg = draft as ConfigLike;
-  const currentAllow = cfg.agents?.defaults?.modelPolicy?.allow;
-  if (!Array.isArray(currentAllow) || currentAllow.length === 0) {
-    return;
+  const modelRefs = models.map((model) => toModelRef(providerId, model.id));
+  if (modelRefs.length === 0) return;
+
+  const defaultsResult = appendModelRefs(
+    cfg.agents?.defaults?.modelPolicy?.allow,
+    modelRefs,
+  );
+  if (defaultsResult.changed) {
+    cfg.agents ??= {};
+    cfg.agents.defaults ??= {};
+    cfg.agents.defaults.modelPolicy ??= {};
+    cfg.agents.defaults.modelPolicy.allow = defaultsResult.next;
   }
 
-  const allow = normalizeAllowList(currentAllow);
-  const existing = new Set(allow);
-  let changed = false;
-  for (const model of models) {
-    const ref = toModelRef(providerId, model.id);
-    if (existing.has(ref)) continue;
-    existing.add(ref);
-    allow.push(ref);
-    changed = true;
-  }
+  const agentEntries = cfg.agents?.entries;
+  if (!agentEntries) return;
+  for (const [agentId, entry] of Object.entries(agentEntries)) {
+    if (!entry?.modelPolicy) continue;
+    const normalized = normalizeAllowList(entry.modelPolicy.allow);
+    if (!hasProviderScopedRule(normalized, providerId)) continue;
 
-  if (!changed) return;
-  cfg.agents ??= {};
-  cfg.agents.defaults ??= {};
-  cfg.agents.defaults.modelPolicy ??= {};
-  cfg.agents.defaults.modelPolicy.allow = allow;
+    const result = appendModelRefs(entry.modelPolicy.allow, modelRefs);
+    if (!result.changed) continue;
+    agentEntries[agentId] = {
+      ...entry,
+      modelPolicy: {
+        ...entry.modelPolicy,
+        allow: result.next,
+      },
+    };
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
