@@ -45,7 +45,7 @@ jobs:
         run: npm run plugin:validate
 
       - name: Package dry run
-        run: npm publish --dry-run --access public
+        run: npm pack --dry-run
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
