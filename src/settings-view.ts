@@ -3,11 +3,14 @@ import type { ControlUiView, ControlUiViewContext } from "openclaw/plugin-sdk/co
 import { modelFetchContract } from "./contract.js";
 import type {
   ApplyPlan,
+  ApplyStrategyOutput,
   AgentSummary,
   FetchModelsOutput,
   ModelFilterConfig,
   ModelView,
+  PreviewApplyOutput,
   ProviderSummary,
+  ProtectedModel,
 } from "./schemas.js";
 
 type ModelRow = ModelView & {
@@ -123,7 +126,7 @@ const PAGE_MARKUP = `
         <div class="mf-replace-note">
           <div>
             <strong>默认替换 Provider 模型列表</strong>
-            应用时会删除未选中的已有模型；写入前会重新获取远端列表，并逐项校验确认的删除模型。
+            应用时会删除未选中的已有模型；仍被 utility、媒体、voice、pdf、embeddedAgent 或 hooks 等配置引用的模型会自动保留。写入前会重新获取远端列表，并逐项校验确认的删除模型。
           </div>
         </div>
         <div>
@@ -180,6 +183,7 @@ const PAGE_MARKUP = `
       <div class="mf-dialog-body">
         <p>请确认要移除的模型：</p>
         <div class="mf-delete-list" data-ref="deleteList"></div>
+        <div class="mf-reference-note" data-ref="deleteRefs" hidden></div>
       </div>
       <div class="mf-dialog-actions">
         <button class="mf-button" data-ref="cancelDelete" type="button">取消</button>
@@ -328,6 +332,7 @@ export function mountModelFetchSettings(
   let error = "";
   let notice = "";
   let pendingPlan: ApplyPlan | null = null;
+  const protections = new Map<string, ProtectedModel[]>();
 
   container.replaceChildren();
   container.innerHTML = PAGE_MARKUP;
@@ -367,6 +372,7 @@ export function mountModelFetchSettings(
     deleteTitle: page.querySelector<HTMLElement>('[data-ref="deleteTitle"]')!,
     deleteDescription: page.querySelector<HTMLElement>('[data-ref="deleteDescription"]')!,
     deleteList: page.querySelector<HTMLElement>('[data-ref="deleteList"]')!,
+    deleteRefs: page.querySelector<HTMLElement>('[data-ref="deleteRefs"]')!,
     cancelDelete: page.querySelector<HTMLButtonElement>('[data-ref="cancelDelete"]')!,
     confirmDelete: page.querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!,
   };
@@ -518,6 +524,7 @@ export function mountModelFetchSettings(
     removedIds: string[],
     regexError: string,
     manualSet: Set<string>,
+    protectedRefs: Map<string, string[]>,
   ) {
     refs.modelRows.replaceChildren();
     const normalizedSearch = search.trim().toLowerCase();
@@ -575,6 +582,10 @@ export function mountModelFetchSettings(
       if (regexError && model.remote) {
         badge.classList.add("is-removed");
         badge.textContent = "等待修正正则";
+      } else if (protectedRefs.has(model.id)) {
+        badge.classList.add("is-protected");
+        badge.textContent = "引用保护";
+        badge.title = `仍被以下配置引用，已保留：${(protectedRefs.get(model.id) ?? []).join("、")}`;
       } else if (removed.has(model.id)) {
         badge.classList.add("is-removed");
         badge.textContent = "将删除";
@@ -662,12 +673,17 @@ export function mountModelFetchSettings(
     updateRegexNotes(analysis);
     renderWhitelist(filter);
     renderAgentTargets(draft);
+    const protectedRefs = new Map<string, string[]>();
+    for (const entry of protections.get(currentId) ?? []) {
+      protectedRefs.set(entry.modelId, entry.references);
+    }
     renderRows(
       rows,
       changes.selected,
       changes.removedIds,
       analysis.error,
       manualIds(filter),
+      protectedRefs,
     );
 
     refs.error.hidden = !error;
@@ -816,6 +832,27 @@ export function mountModelFetchSettings(
     }
   }
 
+  function renderDeleteReferences(entries: ProtectedModel[]) {
+    refs.deleteRefs.replaceChildren();
+    refs.deleteRefs.hidden = entries.length === 0;
+    if (entries.length === 0) return;
+
+    const heading = document.createElement("p");
+    heading.textContent = `以下 ${entries.length} 个模型仍被配置引用，将保留在列表中：`;
+    refs.deleteRefs.append(heading);
+
+    for (const entry of entries) {
+      const row = document.createElement("div");
+      row.className = "mf-reference-item";
+      const ref = document.createElement("code");
+      ref.textContent = entry.ref;
+      const paths = document.createElement("span");
+      paths.textContent = entry.references.join("、");
+      row.append(ref, paths);
+      refs.deleteRefs.append(row);
+    }
+  }
+
   async function applyPlan(provider: ProviderSummary, plan: ApplyPlan) {
     if (applying) return;
     const draft = currentDraft();
@@ -824,17 +861,20 @@ export function mountModelFetchSettings(
     error = "";
     render();
     try {
-      const output = await feature.invoke("strategy.apply", {
-        provider: provider.id,
-        fingerprint: plan.fingerprint,
-        expectedRemovals: plan.removedIds,
-        targetAgents: draft.targetAgents,
-      });
+      const output: ApplyStrategyOutput & { protectedModels?: ProtectedModel[] } =
+        await feature.invoke("strategy.apply", {
+          provider: provider.id,
+          fingerprint: plan.fingerprint,
+          expectedRemovals: plan.removedIds,
+          targetAgents: draft.targetAgents,
+        });
       if (disposed || context.signal.aborted) return;
       remotes.set(provider.id, {
         models: output.models,
         fetchedAt: output.fetchedAt,
       });
+      const protectedModels = output.protectedModels ?? [];
+      protections.set(provider.id, protectedModels);
       await refreshProviders(false);
       const syncedSuffix =
         output.syncedAgents.length > 0
@@ -842,8 +882,12 @@ export function mountModelFetchSettings(
           : output.targetAgents.length > 0
             ? "；目标 Agent 未更新（可能未配置 allowlist）"
             : "";
+      const protectedSuffix =
+        protectedModels.length > 0
+          ? `；引用保护保留 ${protectedModels.length} 个模型`
+          : "";
       setNotice(
-        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}`,
+        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}${protectedSuffix}`,
       );
       pendingPlan = null;
       if (typeof refs.deleteDialog.close === "function" && refs.deleteDialog.open) {
@@ -875,15 +919,18 @@ export function mountModelFetchSettings(
     notice = "";
     render();
     try {
-      const output = await feature.invoke("strategy.preview", {
-        provider: provider.id,
-      });
+      const output: PreviewApplyOutput & { protectedModels?: ProtectedModel[] } =
+        await feature.invoke("strategy.preview", {
+          provider: provider.id,
+        });
       if (disposed || context.signal.aborted) return;
       remotes.set(provider.id, {
         models: output.models,
         fetchedAt: output.plan.fetchedAt,
       });
       pendingPlan = output.plan;
+      const protectedModels = output.plan.protectedModels ?? [];
+      protections.set(provider.id, protectedModels);
       previewing = false;
       render();
 
@@ -901,6 +948,7 @@ export function mountModelFetchSettings(
         code.textContent = id;
         refs.deleteList.append(code);
       }
+      renderDeleteReferences(protectedModels);
       openDeleteDialog();
     } catch (cause) {
       setError(messageForError(cause));

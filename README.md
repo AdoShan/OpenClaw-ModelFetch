@@ -17,6 +17,7 @@ Fetch a provider's remote model list inside the OpenClaw Control UI, apply a per
 - Refreshes results on blur or Enter; invalid regexes block saving and applying.
 - Re-fetches and re-plans before applying, and aborts the write if the remote list or config changed during confirmation.
 - Defaults to replace mode: the final config keeps only the models selected by the current strategy plus manually selected ones.
+- Protects models still referenced by non-agent settings such as utility, decision, media, voice, PDF, embedded-agent failover and hook models; the delete dialog lists the config paths that kept them.
 - Preserves existing per-model fields (name, cost, modalities and so on) for known IDs, and never exposes provider API keys.
 - When "override agent" is selected, applying also syncs that agent's allowlist and model map: newly selected models are added and deselected exact entries for the same provider are removed, so the WebUI stops offering stale models.
 
@@ -122,7 +123,7 @@ Work through these in order:
 
 If you use model policy allowlists (`agents.defaults.modelPolicy.allow` or a non-empty `agents.entries.<agent>.modelPolicy.allow`), applying the strategy also syncs the `provider/model` entries written in this run. For agents ticked under "Override agent", the sync removes deselected exact model entries for that provider; other providers, wildcard rules such as `provider/*`, and custom agent configs for retained models are left alone.
 
-Applying uses replace mode by default: models for the current provider that the strategy did not select are removed. If the remote list, the filter strategy or the config changes after the preview, the write is aborted and a fresh preview is required.
+Applying uses replace mode by default: models for the current provider that the strategy did not select are removed. A model is kept when it is still referenced by a non-agent consumer such as `agents.defaults.utilityModel`, `agents.defaults.imageModel`, `agents.defaults.mediaModels.*`, `agents.defaults.voiceModel`, `agents.defaults.pdfModel`, `agents.defaults.embeddedAgent.cyberFailover.model`, `agents.entries.*.utilityModel`, `agents.entries.*.decisionModel`, `hooks.gmail.model` or `hooks.mappings[].model`. The confirmation dialog lists those references. If the remote list, filter strategy, protected references or other config changes after the preview, the write is aborted and a fresh preview is required.
 
 ## Filter rules
 
@@ -194,7 +195,7 @@ Temporary manual selection:
 }
 ```
 
-The result reports the provider, remote model count, the final selected model IDs, added/unchanged/removed counts, the config path and whether the config was persisted.
+The result reports the provider, remote model count, the final selected model IDs, added/unchanged/removed counts, protected models with their reference paths, the config path and whether the config was persisted.
 
 ## Provider examples
 

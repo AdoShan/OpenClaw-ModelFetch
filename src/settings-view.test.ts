@@ -74,6 +74,7 @@ function applyPlan(overrides: Partial<ApplyPlan> = {}): ApplyPlan {
     fetchedCount: 3,
     addedIds: [],
     removedIds: ["stale/model"],
+    protectedModels: [],
     selectedIds: openRouterModels.map((model) => model.id),
     unchangedCount: 1,
     ...overrides,
@@ -216,6 +217,12 @@ function modelCheckbox(
         row.querySelector(".mf-model-id")?.textContent === modelId,
     )
     ?.querySelector<HTMLInputElement>(".mf-model-check");
+}
+
+function modelBadge(harness: ReturnType<typeof createHarness>, modelId: string) {
+  return [...harness.container.querySelectorAll<HTMLTableRowElement>(".mf-table tbody tr")].find(
+    (row) => row.querySelector(".mf-model-id")?.textContent === modelId,
+  )?.querySelector<HTMLElement>(".mf-badge");
 }
 
 afterEach(() => {
@@ -456,6 +463,45 @@ describe("Model Fetch settings view", () => {
     expect(harness.container.querySelector<HTMLInputElement>('[data-ref="includeRegex"]')?.value).toBe(
       "^qwen",
     );
+  });
+
+  it("shows which references keep a model alive in the delete confirmation", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          protectedModels: [
+            {
+              modelId: "stale/model",
+              ref: "openrouter/stale/model",
+              references: ["agents.defaults.utilityModel", "hooks.gmail.model"],
+            },
+          ],
+        }),
+        models: openRouterModels,
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const referenceNote = harness.container.querySelector<HTMLElement>(
+      '[data-ref="deleteRefs"]',
+    )!;
+    expect(referenceNote.hasAttribute("hidden")).toBe(false);
+    expect(referenceNote.textContent).toContain("openrouter/stale/model");
+    expect(referenceNote.textContent).toContain("agents.defaults.utilityModel");
+    expect(referenceNote.textContent).toContain("hooks.gmail.model");
+    expect(modelBadge(harness, "stale/model")?.textContent).toBe("引用保护");
+    expect(modelBadge(harness, "stale/model")?.title).toContain("hooks.gmail.model");
   });
 
   it("blocks saving and applying when either regex is invalid", async () => {

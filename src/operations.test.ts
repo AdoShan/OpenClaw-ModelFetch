@@ -532,6 +532,226 @@ describe("Control UI operations", () => {
     expect(mutateConfigFile).not.toHaveBeenCalled();
   });
 
+  it("keeps a model referenced by utilityModel and reports the path in the plan", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: { utilityModel: "openrouter/openai/gpt-4o" },
+        entries: { main: { utilityModel: "openrouter/openai/gpt-4o" } },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^anthropic/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("anthropic/claude")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.removedIds).toEqual(["stale/model"]);
+    expect(preview.plan.protectedModels).toEqual([
+      {
+        modelId: "openai/gpt-4o",
+        ref: "openrouter/openai/gpt-4o",
+        references: ["agents.defaults.utilityModel", "agents.entries.main.utilityModel"],
+      },
+    ]);
+    expect(preview.models.map((row) => row.id)).toContain("openai/gpt-4o");
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: preview.plan.removedIds,
+    });
+    expect(applied.removed).toBe(1);
+    expect(applied.protectedModels).toEqual(preview.plan.protectedModels);
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "anthropic/claude",
+      "openai/gpt-4o",
+    ]);
+    expect(getConfig().agents?.defaults?.utilityModel).toBe("openrouter/openai/gpt-4o");
+  });
+
+  it("keeps models referenced by hooks even when the hook is not an agent consumer", async () => {
+    const { api, getConfig } = createApi({
+      hooks: {
+        gmail: { model: "openrouter/gmail-model" },
+        mappings: [{ match: { path: "/inbox" }, model: "openrouter/hook-model" }],
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [
+              model("gmail-model"),
+              model("hook-model"),
+              model("openai/gpt-4o"),
+            ],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.protectedModels).toEqual([
+      {
+        modelId: "gmail-model",
+        ref: "openrouter/gmail-model",
+        references: ["hooks.gmail.model"],
+      },
+      {
+        modelId: "hook-model",
+        ref: "openrouter/hook-model",
+        references: ["hooks.mappings[0].model"],
+      },
+    ]);
+    expect(preview.plan.removedIds).toEqual([]);
+
+    await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: [],
+    });
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+      "gmail-model",
+      "hook-model",
+    ]);
+  });
+
+  it("refuses to write when a reference appears after the confirmation", async () => {
+    const { api, getConfig } = createApi(
+      baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    );
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.protectedModels).toEqual([]);
+
+    const mutateConfigFile = vi.fn(
+      async ({ mutate }: { mutate: (draft: unknown) => void }) => {
+        const draft = structuredClone(getConfig()) as {
+          agents?: { defaults?: { utilityModel?: string } };
+        };
+        draft.agents = { defaults: { utilityModel: "openrouter/stale/model" } };
+        mutate(draft);
+        return { path: "/tmp/openclaw.json" };
+      },
+    );
+    (
+      api.runtime.config as unknown as {
+        mutateConfigFile: (params: {
+          base?: string;
+          afterWrite: { mode: "auto" };
+          mutate: (draft: unknown) => void;
+        }) => Promise<{ path: string }>;
+      }
+    ).mutateConfigFile = mutateConfigFile;
+
+    await expect(
+      operations.applyStrategy({
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: ["stale/model"],
+      }),
+    ).rejects.toThrow(/模型引用在确认后发生变化/);
+    expect(mutateConfigFile).toHaveBeenCalledTimes(1);
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+      "stale/model",
+    ]);
+  });
+
+  it("keeps agent allowlist and model entry sync semantics unchanged when protecting models", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: { utilityModel: "openrouter/utility-model" },
+        entries: {
+          main: {
+            modelPolicy: {
+              allow: ["openrouter/openai/gpt-4o", "openrouter/utility-model"],
+            },
+            models: {
+              "openrouter/openai/gpt-4o": {},
+              "openrouter/utility-model": {},
+            },
+          },
+        },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [
+              model("openai/gpt-4o"),
+              model("utility-model"),
+              model("stale/model"),
+            ],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" }, targetAgents: ["main"] },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.removedIds).toEqual(["stale/model"]);
+    expect(preview.plan.protectedModels.map((entry) => entry.modelId)).toEqual(["utility-model"]);
+
+    await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["stale/model"],
+      targetAgents: ["main"],
+    });
+
+    const main = getConfig().agents?.entries?.main;
+    expect(main?.modelPolicy?.allow).toEqual([
+      "openrouter/openai/gpt-4o",
+      "openrouter/utility-model",
+    ]);
+    expect(main?.models).toEqual({
+      "openrouter/openai/gpt-4o": {},
+      "openrouter/utility-model": {},
+    });
+  });
+
   it("registers lower-case session actions with the right read/write scopes", () => {
     const { api, registerSessionAction } = createApi(baseConfig({}));
     registerModelFetchOperations(api);

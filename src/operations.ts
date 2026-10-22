@@ -7,6 +7,8 @@ import type {
 } from "openclaw/plugin-sdk/core";
 import { modelFetchContract } from "./contract.js";
 import {
+  applyModelReferenceProtection,
+  collectModelReferenceUsages,
   fetchProviderModels,
   getProvider,
   mergeModels,
@@ -33,6 +35,7 @@ import type {
   ModelView,
   PreviewApplyOutput,
   ProviderSummary,
+  ProtectedModel,
   SaveStrategyInput,
   SaveStrategyOutput,
 } from "./schemas.js";
@@ -68,6 +71,7 @@ type ComputedPlan = {
   removedIds: string[];
   selectedIds: string[];
   unchangedCount: number;
+  protectedModels: ProtectedModel[];
   models: ModelView[];
   fingerprint: string;
   finalModels: ModelDefinitionLike[];
@@ -126,6 +130,7 @@ function planFingerprint(input: {
   selectedIds: string[];
   addedIds: string[];
   removedIds: string[];
+  protectedModels: ProtectedModel[];
 }): string {
   return createHash("sha256")
     .update(
@@ -137,6 +142,10 @@ function planFingerprint(input: {
         selected: input.selectedIds,
         added: input.addedIds,
         removed: input.removedIds,
+        protected: input.protectedModels.map((entry) => ({
+          modelId: entry.modelId,
+          references: entry.references,
+        })),
       }),
     )
     .digest("hex");
@@ -205,6 +214,24 @@ export function createModelFetchOperations({
     return normalizeTargetAgents(resolveProviderTargetAgents(providerId, config, factoryConfig));
   }
 
+  /**
+   * Models kept only because of a reference are absent from `removedIds`, so the
+   * protection set has to be recomputed over removals plus protected models.
+   * Called against the write draft, this also catches references that appeared
+   * after the user confirmed the preview.
+   */
+  function referenceProtectionDrift(
+    config: unknown,
+    providerId: string,
+    computed: ComputedPlan,
+  ): boolean {
+    const current = collectModelReferenceUsages(config, providerId, [
+      ...computed.removedIds,
+      ...computed.protectedModels.map((entry) => entry.modelId),
+    ]);
+    return JSON.stringify(current) !== JSON.stringify(computed.protectedModels);
+  }
+
   async function fetchModelsForProvider(providerId: string): Promise<{
     provider: ProviderLike;
     fetched: ModelDefinitionLike[];
@@ -228,15 +255,21 @@ export function createModelFetchOperations({
   }
 
   async function computePlan(providerId: string): Promise<ComputedPlan> {
-    const { provider, fetched, fetchedAt } = await fetchModelsForProvider(providerId);
+    const { provider, fetched, fetchedAt, config } = await fetchModelsForProvider(providerId);
     const filter = savedFilter(providerId);
     selectFetchedModels(fetched, filter);
 
     const existing = provider.models ?? [];
     const selected = selectFetchedModels(fetched, filter);
     const merge = mergeModels({ existing, selected, filter });
+    const protection = applyModelReferenceProtection({
+      existing,
+      merged: merge.models,
+      providerId,
+      config,
+    });
     const existingIds = existing.map((model) => model.id);
-    const finalIds = new Set(merge.models.map((model) => model.id));
+    const finalIds = new Set(protection.models.map((model) => model.id));
     const existingSet = new Set(existingIds);
     const removedIds = existingIds.filter((id) => !finalIds.has(id));
     const addedIds = merge.models
@@ -245,8 +278,10 @@ export function createModelFetchOperations({
     const models = fetched.map(toModelView);
     const visibleIds = new Set(models.map((model) => model.id));
     const manualIds = new Set(filter.manualIds ?? []);
+    const protectedIds = new Set(protection.protectedModels.map((entry) => entry.modelId));
     for (const model of existing) {
-      if (manualIds.has(model.id) && !visibleIds.has(model.id)) {
+      const keepVisible = manualIds.has(model.id) || protectedIds.has(model.id);
+      if (keepVisible && !visibleIds.has(model.id)) {
         models.push(toModelView(model));
         visibleIds.add(model.id);
       }
@@ -260,6 +295,7 @@ export function createModelFetchOperations({
       selectedIds: merge.selectedIds,
       addedIds,
       removedIds,
+      protectedModels: protection.protectedModels,
     });
 
     return {
@@ -273,9 +309,10 @@ export function createModelFetchOperations({
       removedIds,
       selectedIds: merge.selectedIds,
       unchangedCount: merge.unchanged,
+      protectedModels: protection.protectedModels,
       models,
       fingerprint,
-      finalModels: merge.models,
+      finalModels: protection.models,
     };
   }
 
@@ -366,6 +403,7 @@ export function createModelFetchOperations({
       fetchedCount: computed.fetched.length,
       addedIds: computed.addedIds,
       removedIds: computed.removedIds,
+      protectedModels: computed.protectedModels,
       selectedIds: computed.selectedIds,
       unchangedCount: computed.unchangedCount,
     };
@@ -411,6 +449,9 @@ export function createModelFetchOperations({
         if (JSON.stringify(currentFilter) !== JSON.stringify(computed.filter)) {
           throw new Error("Provider 筛选策略在确认后发生变化，已取消写入。请重新预览。");
         }
+        if (referenceProtectionDrift(config, provider, computed)) {
+          throw new Error("模型引用在确认后发生变化，已取消写入。请重新预览。");
+        }
         target.models = computed.finalModels;
         ensurePluginEntry(config, provider, computed.filter, nextTargetAgents);
         const syncResult = syncConfiguredModelPolicyAllow(config, provider, computed.finalModels, {
@@ -433,6 +474,7 @@ export function createModelFetchOperations({
       unchanged: computed.unchangedCount,
       removed: computed.removedIds.length,
       selectedIds: computed.selectedIds,
+      protectedModels: computed.protectedModels,
       targetAgents: nextTargetAgents,
       syncedAgents,
       models: computed.models,

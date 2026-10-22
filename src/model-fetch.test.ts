@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import entry from "./index.js";
 import { getToolPluginMetadata } from "openclaw/plugin-sdk/tool-plugin";
 import {
+  applyModelReferenceProtection,
   buildModelsEndpoint,
+  collectModelReferenceUsages,
   createModelFetchTool,
   fetchProviderModels,
   mergeModels,
@@ -146,6 +148,164 @@ describe("model merge", () => {
     });
     expect(merge.models.map((row) => row.id)).toEqual(["manual"]);
     expect(merge.selectedIds).toEqual(["manual"]);
+  });
+});
+
+describe("model reference protection", () => {
+  const referenceConfig = {
+    agents: {
+      defaults: {
+        utilityModel: "openrouter/utility-model",
+        decisionModel: "openrouter/decision-model",
+        imageModel: {
+          primary: "openrouter/image-model",
+          fallbacks: ["openrouter/image-fallback"],
+        },
+        mediaModels: {
+          video: { primary: "openrouter/video-model", fallbacks: [] },
+          music: "openrouter/music-model",
+        },
+        voiceModel: { primary: "openrouter/voice-model" },
+        pdfModel: "openrouter/pdf-model",
+        embeddedAgent: { cyberFailover: { model: "openrouter/cyber-model" } },
+      },
+      entries: {
+        main: {
+          utilityModel: "openrouter/utility-model",
+          decisionModel: "openrouter/entry-decision",
+        },
+        blank: {},
+      },
+    },
+    hooks: {
+      gmail: { model: "openrouter/gmail-model" },
+      mappings: [{ match: { path: "/inbox" }, model: "openrouter/hook-model" }, null, {}],
+    },
+  };
+
+  it("reports every consumer path that pins a pending deletion", () => {
+    const usages = collectModelReferenceUsages(referenceConfig, "openrouter", [
+      "utility-model",
+      "decision-model",
+      "image-model",
+      "image-fallback",
+      "video-model",
+      "music-model",
+      "voice-model",
+      "pdf-model",
+      "cyber-model",
+      "entry-decision",
+      "gmail-model",
+      "hook-model",
+      "unreferenced",
+    ]);
+
+    expect(usages.map((usage) => usage.modelId)).toEqual([
+      "cyber-model",
+      "decision-model",
+      "entry-decision",
+      "gmail-model",
+      "hook-model",
+      "image-fallback",
+      "image-model",
+      "music-model",
+      "pdf-model",
+      "utility-model",
+      "video-model",
+      "voice-model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "utility-model")).toEqual({
+      modelId: "utility-model",
+      ref: "openrouter/utility-model",
+      references: ["agents.defaults.utilityModel", "agents.entries.main.utilityModel"],
+    });
+    expect(usages.find((usage) => usage.modelId === "image-model")?.references).toEqual([
+      "agents.defaults.imageModel.primary",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "image-fallback")?.references).toEqual([
+      "agents.defaults.imageModel.fallbacks[0]",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "video-model")?.references).toEqual([
+      "agents.defaults.mediaModels.video.primary",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "music-model")?.references).toEqual([
+      "agents.defaults.mediaModels.music",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "pdf-model")?.references).toEqual([
+      "agents.defaults.pdfModel",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "cyber-model")?.references).toEqual([
+      "agents.defaults.embeddedAgent.cyberFailover.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "gmail-model")?.references).toEqual([
+      "hooks.gmail.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "hook-model")?.references).toEqual([
+      "hooks.mappings[0].model",
+    ]);
+  });
+
+  it("ignores allowlists, other providers, and wildcard rules", () => {
+    const usages = collectModelReferenceUsages(
+      {
+        agents: {
+          defaults: {
+            modelPolicy: { allow: ["openrouter/allowlisted", "openrouter/*"] },
+            model: "openrouter/default-model",
+            utilityModel: "ark/utility-model",
+          },
+          entries: {
+            main: {
+              models: { "openrouter/entry-model": {} },
+              modelPolicy: { allow: ["openrouter/entry-model"] },
+            },
+          },
+        },
+      },
+      "openrouter",
+      ["allowlisted", "entry-model", "default-model", "utility-model"],
+    );
+    expect(usages).toEqual([]);
+  });
+
+  it("keeps referenced models in the replacement list and reports their paths", () => {
+    const existing = [model("keep"), model("utility-model"), model("drop")];
+    const merge = mergeModels({
+      existing,
+      selected: [model("keep")],
+      filter: { replace: true },
+    });
+    expect(merge.models.map((row) => row.id)).toEqual(["keep"]);
+
+    const protection = applyModelReferenceProtection({
+      existing,
+      merged: merge.models,
+      providerId: "openrouter",
+      config: referenceConfig,
+    });
+
+    expect(protection.models.map((row) => row.id)).toEqual(["keep", "utility-model"]);
+    expect(protection.protectedModels).toEqual([
+      {
+        modelId: "utility-model",
+        ref: "openrouter/utility-model",
+        references: ["agents.defaults.utilityModel", "agents.entries.main.utilityModel"],
+      },
+    ]);
+  });
+
+  it("returns the merged list untouched when nothing references a deletion", () => {
+    const existing = [model("keep"), model("drop")];
+    const merged = mergeModels({ existing, selected: [model("keep")], filter: { replace: true } })
+      .models;
+    const protection = applyModelReferenceProtection({
+      existing,
+      merged,
+      providerId: "openrouter",
+      config: referenceConfig,
+    });
+    expect(protection.models.map((row) => row.id)).toEqual(["keep"]);
+    expect(protection.protectedModels).toEqual([]);
   });
 });
 
@@ -345,6 +505,45 @@ describe("tool execution", () => {
       persisted: false,
       configPath: "models.providers.<providerId>.models",
     });
+  });
+
+  it("keeps a referenced utility model instead of deleting it", async () => {
+    const config = {
+      agents: {
+        defaults: { utilityModel: "openrouter/utility-model" },
+      },
+      models: {
+        providers: {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("utility-model"), model("stale")],
+          },
+        },
+      },
+    };
+    const { mutateConfigFile, tool } = createRuntimeMocks(config, [model("openai/gpt-4o")]);
+    const result = (await tool.execute("call-protected", {
+      provider: "openrouter",
+      includeRegex: "^openai/",
+    })) as { details: ModelFetchToolResult };
+
+    expect(result.details).toMatchObject({
+      removed: 1,
+      protectedModels: [
+        {
+          modelId: "utility-model",
+          ref: "openrouter/utility-model",
+          references: ["agents.defaults.utilityModel"],
+        },
+      ],
+    });
+    const mutation = mutateConfigFile.mock.calls[0]?.[0];
+    const draft = structuredClone(config);
+    mutation?.mutate(draft);
+    expect(
+      (draft.models.providers.openrouter.models as ModelDefinitionLike[]).map((row) => row.id),
+    ).toEqual(["openai/gpt-4o", "utility-model"]);
   });
 
   it("appends selected models to modelPolicy.allow when allowlist is configured", async () => {

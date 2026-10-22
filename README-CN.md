@@ -17,6 +17,7 @@
 - 正则输入框失焦或按 Enter 后更新筛选结果，非法正则会阻止保存和应用。
 - 应用策略前自动重新获取模型并生成删除清单；确认期间列表或配置发生变化时取消写入。
 - 默认使用替换模式，最终配置只保留当前策略选中的远端模型和已手动选择的模型。
+- 自动保护仍被非 Agent 配置引用的模型，例如 utility、决策、媒体、voice、PDF、嵌入式 Agent failover 和 hooks 模型；确认弹窗会列出保留它们的配置路径。
 - 已有模型 ID 会保留原有的名称、价格、模态等扩展字段，不暴露 Provider API Key。
 - 选择“覆盖 Agent”后，应用策略会同步该 Agent 的 allowlist 与模型映射：新增本次选中的模型，并移除该 Provider 下已取消选择的精确条目，避免 WebUI 继续显示过期模型。
 
@@ -122,7 +123,7 @@ openclaw plugins doctor
 
 如果你启用了模型策略 allowlist（`agents.defaults.modelPolicy.allow` 或 `agents.entries.<agent>.modelPolicy.allow` 非空），插件在应用策略时会同步本次写入的 `provider/model`。对“覆盖 Agent”中选中的 Agent，同步会移除该 Provider 下已取消选择的精确模型条目；其他 Provider、通配规则（如 `provider/*`）和保留模型的自定义 Agent 配置不会被删除。
 
-应用默认采用替换模式：当前 Provider 中未被策略选中的模型会被删除。若预览后远端列表、筛选策略或配置中的模型发生变化，本次写入会中止并要求重新预览。
+应用默认采用替换模式：当前 Provider 中未被策略选中的模型会被删除。如果模型仍被非 Agent 消费方引用，例如 `agents.defaults.utilityModel`、`agents.defaults.imageModel`、`agents.defaults.mediaModels.*`、`agents.defaults.voiceModel`、`agents.defaults.pdfModel`、`agents.defaults.embeddedAgent.cyberFailover.model`、`agents.entries.*.utilityModel`、`agents.entries.*.decisionModel`、`hooks.gmail.model` 或 `hooks.mappings[].model`，该模型会被保留，确认弹窗会列出这些引用。若预览后远端列表、筛选策略、引用保护集合或其他配置发生变化，本次写入会中止并要求重新预览。
 
 ## 筛选规则
 
@@ -194,7 +195,7 @@ Provider 策略保存在插件配置中：
 }
 ```
 
-工具结果包含 Provider、远端模型数、最终选中的模型 ID、新增/未变/删除数量、配置路径以及是否已持久化。
+工具结果包含 Provider、远端模型数、最终选中的模型 ID、新增/未变/删除数量、受引用保护的模型及其配置路径、配置路径以及是否已持久化。
 
 ## Provider 示例
 

@@ -96,11 +96,27 @@ export const modelFetchParameters = Type.Object(
 
 export type ModelFetchParams = Static<typeof modelFetchParameters>;
 
+/**
+ * A model kept in the provider list because a non-agent config consumer still
+ * references it, with the config paths that pinned it.
+ */
+export const protectedModelSchema = Type.Object(
+  {
+    modelId: Type.String({ minLength: 1, maxLength: 512 }),
+    ref: Type.String({ minLength: 1, maxLength: 1_024 }),
+    references: Type.Array(Type.String({ maxLength: 1_024 }), { maxItems: 256 }),
+  },
+  { additionalProperties: false },
+);
+
+export type ProtectedModel = Static<typeof protectedModelSchema>;
+
 export const modelFetchResultSchema = Type.Object(
   {
     provider: providerIdSchema,
     fetched: Type.Integer({ minimum: 0 }),
     selected: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 1_000 }),
+    protectedModels: Type.Array(protectedModelSchema, { maxItems: 2_000 }),
     added: Type.Integer({ minimum: 0 }),
     unchanged: Type.Integer({ minimum: 0 }),
     removed: Type.Integer({ minimum: 0 }),
@@ -220,6 +236,7 @@ export const applyPlanSchema = Type.Object(
     fetchedCount: Type.Integer({ minimum: 0 }),
     addedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     removedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
+    protectedModels: Type.Array(protectedModelSchema, { maxItems: 2_000 }),
     selectedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     unchangedCount: Type.Integer({ minimum: 0 }),
   },
@@ -267,6 +284,7 @@ export const applyStrategyOutputSchema = Type.Object(
     unchanged: Type.Integer({ minimum: 0 }),
     removed: Type.Integer({ minimum: 0 }),
     selectedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
+    protectedModels: Type.Array(protectedModelSchema, { maxItems: 2_000 }),
     targetAgents: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
       maxItems: 256,
       uniqueItems: true,

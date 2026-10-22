@@ -15,6 +15,7 @@ import {
   type ModelFetchParams,
   type ModelFetchToolResult,
   type ModelFilterConfig,
+  type ProtectedModel,
 } from "./schemas.js";
 
 export const MODEL_FETCH_TOOL_NAME = "model_fetch";
@@ -476,6 +477,155 @@ export function mergeModels({
   };
 }
 
+type ModelReferenceVisitor = (ref: string, path: string) => void;
+
+function readModelRefScalar(value: unknown, path: string, visit: ModelReferenceVisitor): void {
+  if (typeof value !== "string") return;
+  const ref = value.trim();
+  if (ref) visit(ref, path);
+}
+
+/** Model settings accept either a bare `provider/model` string or `{ primary, fallbacks[] }`. */
+function readModelRefSetting(value: unknown, path: string, visit: ModelReferenceVisitor): void {
+  if (typeof value === "string") {
+    readModelRefScalar(value, path, visit);
+    return;
+  }
+  if (!isRecord(value)) return;
+  readModelRefScalar(value.primary, `${path}.primary`, visit);
+  if (!Array.isArray(value.fallbacks)) return;
+  value.fallbacks.forEach((fallback, index) => {
+    readModelRefScalar(fallback, `${path}.fallbacks[${index}]`, visit);
+  });
+}
+
+/**
+ * Walks the explicit model references that live outside the agent allowlist and
+ * agent `models` sync: utility/decision models, media, voice, pdf, embedded agent
+ * cyber failover, and hook models. Deleting a model named here would leave a
+ * dangling `provider/model` reference behind.
+ */
+function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVisitor): void {
+  if (!isRecord(config)) return;
+
+  const agents = isRecord(config.agents) ? config.agents : undefined;
+  const defaults = agents && isRecord(agents.defaults) ? agents.defaults : undefined;
+  if (defaults) {
+    readModelRefScalar(defaults.utilityModel, "agents.defaults.utilityModel", visit);
+    readModelRefScalar(defaults.decisionModel, "agents.defaults.decisionModel", visit);
+    readModelRefSetting(defaults.imageModel, "agents.defaults.imageModel", visit);
+    readModelRefSetting(defaults.voiceModel, "agents.defaults.voiceModel", visit);
+    readModelRefSetting(defaults.pdfModel, "agents.defaults.pdfModel", visit);
+    if (isRecord(defaults.mediaModels)) {
+      readModelRefSetting(defaults.mediaModels.image, "agents.defaults.mediaModels.image", visit);
+      readModelRefSetting(defaults.mediaModels.video, "agents.defaults.mediaModels.video", visit);
+      readModelRefSetting(defaults.mediaModels.music, "agents.defaults.mediaModels.music", visit);
+    }
+    const embeddedAgent = isRecord(defaults.embeddedAgent) ? defaults.embeddedAgent : undefined;
+    if (embeddedAgent && isRecord(embeddedAgent.cyberFailover)) {
+      readModelRefScalar(
+        embeddedAgent.cyberFailover.model,
+        "agents.defaults.embeddedAgent.cyberFailover.model",
+        visit,
+      );
+    }
+  }
+
+  const entries = agents && isRecord(agents.entries) ? agents.entries : undefined;
+  if (entries) {
+    for (const agentId of Object.keys(entries).sort((left, right) => left.localeCompare(right))) {
+      if (agentId.includes(".")) continue;
+      const entry = entries[agentId];
+      if (!isRecord(entry)) continue;
+      readModelRefScalar(entry.utilityModel, `agents.entries.${agentId}.utilityModel`, visit);
+      readModelRefScalar(entry.decisionModel, `agents.entries.${agentId}.decisionModel`, visit);
+    }
+  }
+
+  const hooks = isRecord(config.hooks) ? config.hooks : undefined;
+  if (hooks) {
+    if (isRecord(hooks.gmail)) {
+      readModelRefScalar(hooks.gmail.model, "hooks.gmail.model", visit);
+    }
+    if (Array.isArray(hooks.mappings)) {
+      hooks.mappings.forEach((mapping, index) => {
+        if (!isRecord(mapping)) return;
+        readModelRefScalar(mapping.model, `hooks.mappings[${index}].model`, visit);
+      });
+    }
+  }
+}
+
+/**
+ * Reports which of `modelIds` are still named by a non-agent model consumer,
+ * together with the config paths that reference them.
+ */
+export function collectModelReferenceUsages(
+  config: unknown,
+  providerId: string,
+  modelIds: readonly string[],
+): ProtectedModel[] {
+  const targets = new Map<string, ProtectedModel>();
+  for (const modelId of modelIds) {
+    const trimmed = modelId.trim();
+    if (!trimmed) continue;
+    const ref = toModelRef(providerId, trimmed);
+    if (!targets.has(ref)) targets.set(ref, { modelId: trimmed, ref, references: [] });
+  }
+  if (targets.size === 0) return [];
+
+  forEachExplicitModelReference(config, (ref, path) => {
+    const usage = targets.get(ref);
+    if (!usage) return;
+    if (!usage.references.includes(path)) usage.references.push(path);
+  });
+
+  const usages = [...targets.values()].filter((usage) => usage.references.length > 0);
+  for (const usage of usages) {
+    usage.references.sort((left, right) => left.localeCompare(right));
+  }
+  return usages.sort((left, right) => left.modelId.localeCompare(right.modelId));
+}
+
+/**
+ * Keeps referenced models in the replacement list instead of deleting them, and
+ * returns the reference paths so the deletion plan can show what was protected.
+ */
+export function applyModelReferenceProtection({
+  existing,
+  merged,
+  providerId,
+  config,
+}: {
+  existing: readonly ModelDefinitionLike[];
+  merged: readonly ModelDefinitionLike[];
+  providerId: string;
+  config: unknown;
+}): { models: ModelDefinitionLike[]; protectedModels: ProtectedModel[] } {
+  const mergedIds = new Set(merged.map((model) => model.id));
+  const pendingIds: string[] = [];
+  const seen = new Set<string>();
+  for (const model of existing) {
+    if (mergedIds.has(model.id) || seen.has(model.id)) continue;
+    seen.add(model.id);
+    pendingIds.push(model.id);
+  }
+
+  const protectedModels = collectModelReferenceUsages(config, providerId, pendingIds);
+  if (protectedModels.length === 0) return { models: [...merged], protectedModels };
+
+  const protectedIds = new Set(protectedModels.map((entry) => entry.modelId));
+  const models = [...merged];
+  const restored = new Set<string>();
+  for (const model of existing) {
+    if (!protectedIds.has(model.id) || restored.has(model.id)) continue;
+    restored.add(model.id);
+    models.push(model);
+  }
+
+  return { models, protectedModels };
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
 }
@@ -706,10 +856,17 @@ export async function runModelFetch({
     signal,
   });
   const selected = selectFetchedModels(fetched, effectiveFilter);
+  const existing = provider.models ?? [];
   const merge = mergeModels({
-    existing: provider.models ?? [],
+    existing,
     selected,
     filter: effectiveFilter,
+  });
+  const protection = applyModelReferenceProtection({
+    existing,
+    merged: merge.models,
+    providerId,
+    config,
   });
 
   let persisted = false;
@@ -724,13 +881,13 @@ export async function runModelFetch({
         cfg.models ??= {};
         cfg.models.providers ??= {};
         const target = cfg.models.providers[providerId] ?? { ...provider };
-        target.models = merge.models;
+        target.models = protection.models;
         cfg.models.providers[providerId] = target;
         const targetAgents = resolveProviderTargetAgents(providerId, cfg, factoryConfig);
-        const syncResult = syncConfiguredModelPolicyAllow(cfg, providerId, merge.models, {
+        const syncResult = syncConfiguredModelPolicyAllow(cfg, providerId, protection.models, {
           targetAgents,
         });
-        syncAgentModelEntries(cfg, providerId, merge.models, {
+        syncAgentModelEntries(cfg, providerId, protection.models, {
           targetAgents: syncResult.syncedAgents,
         });
       },
@@ -743,9 +900,10 @@ export async function runModelFetch({
     provider: providerId,
     fetched: fetched.length,
     selected: merge.selectedIds,
+    protectedModels: protection.protectedModels,
     added: merge.added,
     unchanged: merge.unchanged,
-    removed: merge.removed,
+    removed: Math.max(0, merge.removed - protection.protectedModels.length),
     replace: effectiveFilter.replace === true,
     dryRun: params.dryRun === true,
     configPath,
