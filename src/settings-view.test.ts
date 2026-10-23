@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
 import type { ControlUiHost, ControlUiViewContext } from "openclaw/plugin-sdk/control-ui";
 import {
-  analyzeModelFilter,
+  analyzeModelFilter as analyzeModelFilterDefault,
   computeModelChanges,
   mountModelFetchSettings,
 } from "./settings-view.js";
@@ -23,6 +23,9 @@ type AffectedSession = {
 type ApplyPlanWithSessions = ApplyPlan & {
   affectedSessions?: AffectedSession[];
 };
+
+const analyzeModelFilter: typeof analyzeModelFilterDefault = (models, filter) =>
+  analyzeModelFilterDefault(models, filter, "zh");
 
 const openRouterModels: ModelView[] = [
   { id: "openai/gpt-4o", name: "GPT-4o", contextWindow: 128_000 },
@@ -92,7 +95,7 @@ function applyPlan(overrides: Partial<ApplyPlanWithSessions> = {}): ApplyPlanWit
   };
 }
 
-function createHarness() {
+function createHarness(locale = "zh-CN") {
   const { window, document } = parseHTML("<!doctype html><html><body></body></html>");
   const container = document.createElement("div");
   document.body.append(container);
@@ -134,7 +137,7 @@ function createHarness() {
     pluginId: "model-fetch",
     signal: controller.signal,
     basePath: "",
-    locale: "zh-CN",
+    locale,
     redact: (text: string) => text,
     connection: {
       connected: true,
@@ -277,6 +280,41 @@ describe("model filter helpers", () => {
 });
 
 describe("Model Fetch settings view", () => {
+  it("renders the settings interface in the WebUI language", async () => {
+    const harness = createHarness("en-US");
+    await mountReady(harness);
+
+    expect(harness.container.querySelector(".mf-eyebrow")?.textContent).toBe(
+      "Model discovery and filtering",
+    );
+    expect(
+      harness.container.querySelector<HTMLButtonElement>('[data-ref="fetchButton"]')?.textContent,
+    ).toBe("Fetch remote models");
+    expect(
+      harness.container.querySelector<HTMLInputElement>('[data-ref="search"]')?.placeholder,
+    ).toBe("Search model ID or name");
+    expect(harness.container.querySelector(".mf-summary")?.getAttribute("aria-label")).toBe(
+      "Model summary",
+    );
+  });
+
+  it("localizes dynamic regex errors in the WebUI language", async () => {
+    const harness = createHarness("en-US");
+    await mountReady(harness);
+    const include = harness.container.querySelector<HTMLInputElement>(
+      '[data-ref="includeRegex"]',
+    )!;
+    include.value = "[";
+    include.dispatchEvent(new harness.window.Event("blur", { bubbles: false }));
+
+    expect(
+      harness.container.querySelector<HTMLElement>('[data-ref="includeNote"]')?.textContent,
+    ).toMatch(/^Invalid include regex: /);
+    expect(
+      harness.container.querySelector<HTMLElement>('[data-ref="saveState"]')?.textContent,
+    ).toBe("Fix the regex before saving or applying");
+  });
+
   it("renders one Provider selector and keeps remote fetch read-only", async () => {
     const harness = createHarness();
     await mountReady(harness);

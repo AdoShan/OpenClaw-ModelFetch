@@ -54,18 +54,343 @@ export type ModelChanges = {
   removedIds: string[];
 };
 
+export type InterfaceLanguage = "zh" | "en";
+
+type InterfaceMessages = {
+  eyebrow: string;
+  subhead: string;
+  provider: string;
+  chooseProvider: string;
+  connecting: string;
+  connected: string;
+  waitingConnection: string;
+  retry: string;
+  summaryLabel: string;
+  remote: string;
+  selected: string;
+  configured: string;
+  changes: string;
+  notFetched: string;
+  recent: string;
+  justNow: string;
+  minutesAgo: (count: number) => string;
+  hoursAgo: (count: number) => string;
+  daysAgo: (count: number) => string;
+  addedShort: string;
+  removedShort: string;
+  fetchModels: string;
+  fetchingModels: string;
+  strategyTitle: string;
+  strategyCopy: string;
+  saveStrategy: string;
+  includeRegex: string;
+  excludeRegex: string;
+  includePlaceholder: string;
+  excludePlaceholder: string;
+  includeNote: string;
+  excludeNote: string;
+  includeError: (message: string) => string;
+  excludeError: (message: string) => string;
+  whitelist: string;
+  whitelistEmpty: string;
+  removeWhitelist: (id: string) => string;
+  replaceTitle: string;
+  replaceCopy: string;
+  overrideAgents: string;
+  noAgents: string;
+  overrideAgent: (id: string) => string;
+  noAllowlist: string;
+  modelsTitle: string;
+  modelsCopy: string;
+  searchLabel: string;
+  searchPlaceholder: string;
+  tableWhitelist: string;
+  tableModelId: string;
+  tableModelName: string;
+  tableContext: string;
+  tableResult: string;
+  configuredOnly: (name: string) => string;
+  noMatches: string;
+  waitForRegex: string;
+  referenceProtected: string;
+  referenceProtectedTitle: (paths: string[]) => string;
+  willDelete: string;
+  whitelistBadge: string;
+  selectedBadge: string;
+  unselected: string;
+  configuredBadge: string;
+  addToWhitelist: (id: string) => string;
+  readingProvider: string;
+  noProviders: string;
+  fixRegex: string;
+  unsavedStrategy: string;
+  savedStrategy: string;
+  applyingModels: string;
+  previewingModels: string;
+  applyStrategy: string;
+  deleteTitle: (count: number) => string;
+  deleteDescriptionBase: string;
+  deleteDescriptionProvider: (provider: string) => string;
+  confirmRemove: string;
+  cancel: string;
+  confirmApply: string;
+  savedNotice: (provider: string) => string;
+  referenceNote: (count: number) => string;
+  sessionNote: (count: number) => string;
+  applyNotice: (
+    count: number,
+    provider: string,
+    added: number,
+    removed: number,
+    suffix: string,
+  ) => string;
+  syncedAgents: (agents: string[]) => string;
+  targetAgentsNotUpdated: string;
+  protectedCount: (count: number) => string;
+  resetSessions: (count: number) => string;
+};
+
+const ENGLISH_MESSAGES: InterfaceMessages = {
+  eyebrow: "Model discovery and filtering",
+  subhead:
+    "Fetch remote models, save an independent strategy per Provider, then write the confirmed model list into OpenClaw config.",
+  provider: "Current provider",
+  chooseProvider: "Choose provider",
+  connecting: "Connecting",
+  connected: "Control UI connected",
+  waitingConnection: "Waiting for Gateway connection",
+  retry: "Retry",
+  summaryLabel: "Model summary",
+  remote: "Remote",
+  selected: "Selected",
+  configured: "Configured",
+  changes: "Changes",
+  notFetched: "Not fetched",
+  recent: "Recently fetched",
+  justNow: "Fetched just now",
+  minutesAgo: (count) => `Fetched ${count} minutes ago`,
+  hoursAgo: (count) => `Fetched ${count} hours ago`,
+  daysAgo: (count) => `Fetched ${count} days ago`,
+  addedShort: "added",
+  removedShort: "removed",
+  fetchModels: "Fetch remote models",
+  fetchingModels: "Fetching...",
+  strategyTitle: "Filter strategy",
+  strategyCopy:
+    "Strategies are saved independently per Provider. Manually selected models enter the whitelist and override regex exclusions; you can also choose which agent model allowlists to sync. Regex results update on blur or Enter.",
+  saveStrategy: "Save strategy",
+  includeRegex: "Include regex",
+  excludeRegex: "Exclude regex",
+  includePlaceholder: "For example, ^(openai|anthropic)/",
+  excludePlaceholder: "For example, (embed|rerank)",
+  includeNote:
+    "Leave empty for no include restriction; if the whitelist is also empty, all models are selected.",
+  excludeNote: "Whitelisted models are never excluded.",
+  includeError: (message) => `Invalid include regex: ${message}`,
+  excludeError: (message) => `Invalid exclude regex: ${message}`,
+  whitelist: "Whitelist",
+  whitelistEmpty: "No manually selected models",
+  removeWhitelist: (id) => `Remove ${id} from the whitelist`,
+  replaceTitle: "Replaces the provider model list by default",
+  replaceCopy:
+    "Applying removes unselected existing models; models still referenced by utility, media, voice, PDF, embedded-agent or hooks config are retained automatically. The remote list is fetched again before writing, and every confirmed deletion is rechecked.",
+  overrideAgents: "Override agents",
+  noAgents: "No configurable agents detected",
+  overrideAgent: (id) => `Override agent ${id} model allowlist`,
+  noAllowlist: " (no allowlist configured)",
+  modelsTitle: "Model list",
+  modelsCopy:
+    "Selecting a model adds it to the whitelist; deselecting only removes the whitelist entry and does not change the regex strategy.",
+  searchLabel: "Search models",
+  searchPlaceholder: "Search model ID or name",
+  tableWhitelist: "Whitelist",
+  tableModelId: "Model ID",
+  tableModelName: "Name",
+  tableContext: "Context",
+  tableResult: "Filter result",
+  configuredOnly: (name) => `${name} (configured; not returned remotely)`,
+  noMatches: "No matching models",
+  waitForRegex: "Waiting for a valid regex",
+  referenceProtected: "Reference protected",
+  referenceProtectedTitle: (paths) =>
+    `Retained because these config paths still reference it: ${paths.join(", ")}`,
+  willDelete: "Will delete",
+  whitelistBadge: "Whitelist",
+  selectedBadge: "Selected",
+  unselected: "Unselected",
+  configuredBadge: "Configured",
+  addToWhitelist: (id) => `Add ${id} to the whitelist`,
+  readingProvider: "Reading provider configuration",
+  noProviders: "No configurable providers found",
+  fixRegex: "Fix the regex before saving or applying",
+  unsavedStrategy: "Unsaved strategy; save it before applying",
+  savedStrategy: "Strategy saved; applying fetches remote models again and validates deletions",
+  applyingModels: "Applying...",
+  previewingModels: "Previewing...",
+  applyStrategy: "Apply strategy to config",
+  deleteTitle: (count) => `Confirm deleting ${count} models`,
+  deleteDescriptionBase: "Applying replaces this provider's model list.",
+  deleteDescriptionProvider: (provider) =>
+    `After applying, these models in ${provider} will be removed from configuration.`,
+  confirmRemove: "Confirm the models to remove:",
+  cancel: "Cancel",
+  confirmApply: "Confirm apply and delete",
+  savedNotice: (provider) => `Filter strategy for ${provider} saved`,
+  referenceNote: (count) =>
+    `These ${count} models remain in the list because other configuration references them:`,
+  sessionNote: (count) =>
+    `Affected sessions: the following ${count} sessions will fall back to the default model after applying.`,
+  applyNotice: (count, provider, added, removed, suffix) =>
+    `Wrote ${count} models to ${provider}, added ${added}, removed ${removed}${suffix}`,
+  syncedAgents: (agents) => `; synced agents: ${agents.join(", ")}`,
+  targetAgentsNotUpdated: "; target agents were not updated (they may have no allowlist)",
+  protectedCount: (count) => `; reference protection retained ${count} models`,
+  resetSessions: (count) => `; reset ${count} sessions to the default model`,
+};
+
+const CHINESE_MESSAGES: InterfaceMessages = {
+  eyebrow: "模型发现与筛选",
+  subhead:
+    "获取远端模型，按 Provider 独立保存筛选策略，再把确认后的模型列表写入 OpenClaw 配置。",
+  provider: "当前 Provider",
+  chooseProvider: "选择 Provider",
+  connecting: "正在连接",
+  connected: "Control UI 已连接",
+  waitingConnection: "等待 Gateway 连接",
+  retry: "重试",
+  summaryLabel: "模型统计",
+  remote: "远端",
+  selected: "已选",
+  configured: "已配置",
+  changes: "变更",
+  notFetched: "尚未获取",
+  recent: "最近获取",
+  justNow: "刚刚获取",
+  minutesAgo: (count) => `${count} 分钟前`,
+  hoursAgo: (count) => `${count} 小时前`,
+  daysAgo: (count) => `${count} 天前`,
+  addedShort: "新增",
+  removedShort: "删除",
+  fetchModels: "获取远端模型",
+  fetchingModels: "正在获取...",
+  strategyTitle: "筛选策略",
+  strategyCopy:
+    "策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则失焦或按回车后更新结果。",
+  saveStrategy: "保存策略",
+  includeRegex: "包含正则",
+  excludeRegex: "排除正则",
+  includePlaceholder: "例如 ^(openai|anthropic)/",
+  excludePlaceholder: "例如 (embed|rerank)",
+  includeNote: "留空时不按正则限制；若白名单也为空则选择全部模型。",
+  excludeNote: "白名单中的模型不会被排除。",
+  includeError: (message) => `包含正则格式错误：${message}`,
+  excludeError: (message) => `排除正则格式错误：${message}`,
+  whitelist: "白名单",
+  whitelistEmpty: "尚未选择手动白名单模型",
+  removeWhitelist: (id) => `从白名单移除 ${id}`,
+  replaceTitle: "默认替换 Provider 模型列表",
+  replaceCopy:
+    "应用时会删除未选中的已有模型；仍被 utility、媒体、voice、pdf、embeddedAgent 或 hooks 等配置引用的模型会自动保留。写入前会重新获取远端列表，并逐项校验确认的删除模型。",
+  overrideAgents: "覆盖 Agent",
+  noAgents: "未检测到可配置的 Agent",
+  overrideAgent: (id) => `覆盖 Agent ${id} 的模型 allowlist`,
+  noAllowlist: "（未配置 allowlist）",
+  modelsTitle: "模型列表",
+  modelsCopy: "勾选模型会写入白名单；取消勾选只移除白名单，不改变正则策略。",
+  searchLabel: "搜索模型",
+  searchPlaceholder: "搜索模型 ID 或名称",
+  tableWhitelist: "白名单",
+  tableModelId: "模型 ID",
+  tableModelName: "名称",
+  tableContext: "上下文",
+  tableResult: "筛选结果",
+  configuredOnly: (name) => `${name}（配置中，远端未返回）`,
+  noMatches: "没有匹配的模型",
+  waitForRegex: "等待修正正则",
+  referenceProtected: "引用保护",
+  referenceProtectedTitle: (paths) => `仍被以下配置引用，已保留：${paths.join("、")}`,
+  willDelete: "将删除",
+  whitelistBadge: "白名单",
+  selectedBadge: "已选择",
+  unselected: "未选中",
+  configuredBadge: "已配置",
+  addToWhitelist: (id) => `将 ${id} 加入白名单`,
+  readingProvider: "正在读取 Provider 配置",
+  noProviders: "尚未配置任何可用的 Provider",
+  fixRegex: "请修正正则表达式后再保存或应用",
+  unsavedStrategy: "有未保存的筛选策略，保存后才能应用",
+  savedStrategy: "策略已保存；应用时会重新获取远端模型并校验删除项",
+  applyingModels: "正在应用...",
+  previewingModels: "正在预览...",
+  applyStrategy: "应用策略到配置",
+  deleteTitle: (count) => `确认删除 ${count} 个模型`,
+  deleteDescriptionBase: "应用后会替换当前 Provider 的模型列表。",
+  deleteDescriptionProvider: (provider) => `应用后，${provider} 配置中的以下模型将被移除。`,
+  confirmRemove: "请确认要移除的模型：",
+  cancel: "取消",
+  confirmApply: "确认应用并删除",
+  savedNotice: (provider) => `${provider} 的筛选策略已保存`,
+  referenceNote: (count) => `以下 ${count} 个模型仍被配置引用，将保留在列表中：`,
+  sessionNote: (count) => `受影响会话：应用后以下 ${count} 个会话会回落到默认模型。`,
+  applyNotice: (count, provider, added, removed, suffix) =>
+    `已将 ${count} 个模型写入 ${provider}，新增 ${added}，删除 ${removed}${suffix}`,
+  syncedAgents: (agents) => `；同步 Agent：${agents.join(", ")}`,
+  targetAgentsNotUpdated: "；目标 Agent 未更新（可能未配置 allowlist）",
+  protectedCount: (count) => `；引用保护保留 ${count} 个模型`,
+  resetSessions: (count) => `；已回落 ${count} 个会话到默认模型`,
+};
+
+function messagesFor(language: InterfaceLanguage): InterfaceMessages {
+  return language === "en" ? ENGLISH_MESSAGES : CHINESE_MESSAGES;
+}
+
+function interfaceLanguage(locale: string | undefined): InterfaceLanguage {
+  return locale?.toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
+const BACKEND_ERROR_TRANSLATIONS: ReadonlyArray<[RegExp, string]> = [
+  [
+    /^模型列表或筛选策略已变化，请重新预览后再确认应用。$/,
+    "The model list or filter strategy changed. Preview again before applying.",
+  ],
+  [
+    /^待删除模型与确认列表不一致，已取消写入。请重新预览。$/,
+    "The deletion list no longer matches the confirmed list; the write was canceled. Preview again.",
+  ],
+  [
+    /^Provider 配置在确认后发生变化，已取消写入。请重新预览。$/,
+    "Provider configuration changed after confirmation; the write was canceled. Preview again.",
+  ],
+  [
+    /^Provider 筛选策略在确认后发生变化，已取消写入。请重新预览。$/,
+    "Provider filter strategy changed after confirmation; the write was canceled. Preview again.",
+  ],
+  [
+    /^模型引用在确认后发生变化，已取消写入。请重新预览。$/,
+    "Model references changed after confirmation; the write was canceled. Preview again.",
+  ],
+];
+
+function translateBackendError(message: string, language: InterfaceLanguage): string {
+  if (language === "zh") return message;
+  for (const [pattern, translation] of BACKEND_ERROR_TRANSLATIONS) {
+    if (pattern.test(message)) return translation;
+  }
+  return message;
+}
+
 const PAGE_MARKUP = `
   <div class="mf-page">
     <header class="mf-header">
       <div class="mf-heading">
-        <p class="mf-eyebrow">模型发现与筛选</p>
+        <p class="mf-eyebrow" data-i18n="eyebrow">模型发现与筛选</p>
         <h1 class="mf-title">Model Fetch</h1>
-        <p class="mf-subhead">获取远端模型，按 Provider 独立保存筛选策略，再把确认后的模型列表写入 OpenClaw 配置。</p>
+        <p class="mf-subhead" data-i18n="subhead">获取远端模型，按 Provider 独立保存筛选策略，再把确认后的模型列表写入 OpenClaw 配置。</p>
       </div>
       <div class="mf-provider-area">
         <label class="mf-provider-picker">
-          <span>当前 Provider</span>
-          <select class="mf-select" data-ref="providerSelect" aria-label="选择 Provider" disabled></select>
+          <span data-i18n="provider">当前 Provider</span>
+          <select class="mf-select" data-ref="providerSelect" disabled></select>
         </label>
         <span class="mf-connection" data-ref="connection">
           <span class="mf-connection-dot"></span>
@@ -77,55 +402,55 @@ const PAGE_MARKUP = `
 
     <div class="mf-error" data-ref="error" role="alert" hidden>
       <span data-ref="errorText"></span>
-      <button class="mf-button is-small" data-ref="retry" type="button">重试</button>
+      <button class="mf-button is-small" data-ref="retry" type="button" data-i18n="retry">重试</button>
     </div>
 
-    <section class="mf-summary" aria-label="模型统计">
+    <section class="mf-summary">
       <div class="mf-stat">
-        <span class="mf-stat-label">远端</span>
+        <span class="mf-stat-label" data-i18n="remote">远端</span>
         <strong class="mf-stat-value" data-ref="remoteCount">0</strong>
-        <small class="mf-stat-note" data-ref="fetchAge">尚未获取</small>
+        <small class="mf-stat-note" data-ref="fetchAge"></small>
       </div>
       <div class="mf-stat">
-        <span class="mf-stat-label">已选</span>
+        <span class="mf-stat-label" data-i18n="selected">已选</span>
         <strong class="mf-stat-value" data-ref="selectedCount">0</strong>
-        <small class="mf-stat-note">正则与白名单</small>
+        <small class="mf-stat-note" data-i18n="strategyTitle">正则与白名单</small>
       </div>
       <div class="mf-stat">
-        <span class="mf-stat-label">已配置</span>
+        <span class="mf-stat-label" data-i18n="configured">已配置</span>
         <strong class="mf-stat-value" data-ref="configuredCount">0</strong>
-        <small class="mf-stat-note">当前 Provider</small>
+        <small class="mf-stat-note" data-i18n="provider">当前 Provider</small>
       </div>
       <div class="mf-stat">
-        <span class="mf-stat-label">变更</span>
+        <span class="mf-stat-label" data-i18n="changes">变更</span>
         <strong class="mf-stat-value" data-ref="changeCount">0</strong>
-        <small class="mf-stat-note" data-ref="changeDetail">新增 0 · 删除 0</small>
+        <small class="mf-stat-note" data-ref="changeDetail"></small>
       </div>
       <div class="mf-summary-action">
-        <button class="mf-button is-small" data-ref="fetchButton" type="button" disabled>获取远端模型</button>
+        <button class="mf-button is-small" data-ref="fetchButton" type="button" disabled data-i18n="fetchModels">获取远端模型</button>
       </div>
     </section>
 
     <section class="mf-panel" aria-labelledby="mf-strategy-title">
       <div class="mf-panel-head">
         <div>
-          <h2 class="mf-panel-title" id="mf-strategy-title">筛选策略</h2>
-          <p class="mf-panel-copy">策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则失焦或按回车后更新结果。</p>
+          <h2 class="mf-panel-title" id="mf-strategy-title" data-i18n="strategyTitle">筛选策略</h2>
+          <p class="mf-panel-copy" data-i18n="strategyCopy">策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则失焦或按回车后更新结果。</p>
         </div>
         <div class="mf-panel-actions">
-          <button class="mf-button is-small" data-ref="saveButton" type="button" disabled>保存策略</button>
+          <button class="mf-button is-small" data-ref="saveButton" type="button" disabled data-i18n="saveStrategy">保存策略</button>
         </div>
       </div>
 
       <div class="mf-filter-grid">
         <label class="mf-field">
-          <span class="mf-field-label">包含正则 <code>includeRegex</code></span>
-          <input class="mf-input" data-ref="includeRegex" type="text" spellcheck="false" placeholder="例如 ^(openai|anthropic)/">
+          <span class="mf-field-label"><span data-i18n="includeRegex">包含正则</span> <code>includeRegex</code></span>
+          <input class="mf-input" data-ref="includeRegex" type="text" spellcheck="false" placeholder="例如 ^(openai|anthropic)/" data-i18n-placeholder="includePlaceholder">
           <span class="mf-field-note" data-ref="includeNote">留空时不按正则限制；若白名单也为空则选择全部模型。</span>
         </label>
         <label class="mf-field">
-          <span class="mf-field-label">排除正则 <code>excludeRegex</code></span>
-          <input class="mf-input" data-ref="excludeRegex" type="text" spellcheck="false" placeholder="例如 (embed|rerank)">
+          <span class="mf-field-label"><span data-i18n="excludeRegex">排除正则</span> <code>excludeRegex</code></span>
+          <input class="mf-input" data-ref="excludeRegex" type="text" spellcheck="false" placeholder="例如 (embed|rerank)" data-i18n-placeholder="excludePlaceholder">
           <span class="mf-field-note" data-ref="excludeNote">白名单中的模型不会被排除。</span>
         </label>
       </div>
@@ -133,20 +458,20 @@ const PAGE_MARKUP = `
       <div class="mf-filter-lower">
         <div>
           <div class="mf-section-label">
-            <span>白名单</span>
+            <span data-i18n="whitelist">白名单</span>
             <span class="mf-count" data-ref="whitelistCount">0</span>
           </div>
           <div class="mf-chip-box" data-ref="whitelistBox"></div>
         </div>
         <div class="mf-replace-note">
           <div>
-            <strong>默认替换 Provider 模型列表</strong>
-            应用时会删除未选中的已有模型；仍被 utility、媒体、voice、pdf、embeddedAgent 或 hooks 等配置引用的模型会自动保留。写入前会重新获取远端列表，并逐项校验确认的删除模型。
+            <strong data-i18n="replaceTitle">默认替换 Provider 模型列表</strong>
+            <span data-i18n="replaceCopy">应用时会删除未选中的已有模型；仍被 utility、媒体、voice、pdf、embeddedAgent 或 hooks 等配置引用的模型会自动保留。写入前会重新获取远端列表，并逐项校验确认的删除模型。</span>
           </div>
         </div>
         <div>
           <div class="mf-section-label">
-            <span>覆盖 Agent</span>
+            <span data-i18n="overrideAgents">覆盖 Agent</span>
             <span class="mf-count" data-ref="agentTargetCount">0</span>
           </div>
           <div class="mf-agent-box" data-ref="agentTargets"></div>
@@ -157,46 +482,46 @@ const PAGE_MARKUP = `
     <section class="mf-panel" aria-labelledby="mf-models-title">
       <div class="mf-panel-head">
         <div>
-          <h2 class="mf-panel-title" id="mf-models-title">模型列表</h2>
-          <p class="mf-panel-copy">勾选模型会写入白名单；取消勾选只移除白名单，不改变正则策略。</p>
+          <h2 class="mf-panel-title" id="mf-models-title" data-i18n="modelsTitle">模型列表</h2>
+          <p class="mf-panel-copy" data-i18n="modelsCopy">勾选模型会写入白名单；取消勾选只移除白名单，不改变正则策略。</p>
         </div>
         <label class="mf-search-wrap">
-          <span class="mf-visually-hidden">搜索模型</span>
+          <span class="mf-visually-hidden" data-i18n="searchLabel">搜索模型</span>
           <span class="mf-search-icon" aria-hidden="true"></span>
-          <input class="mf-search" data-ref="search" type="search" placeholder="搜索模型 ID 或名称">
+          <input class="mf-search" data-ref="search" type="search" placeholder="搜索模型 ID 或名称" data-i18n-placeholder="searchPlaceholder">
         </label>
       </div>
       <div class="mf-table-wrap">
         <table class="mf-table">
           <thead>
             <tr>
-              <th class="mf-check-cell">白名单</th>
-              <th>模型 ID</th>
-              <th>名称</th>
-              <th>上下文</th>
-              <th>筛选结果</th>
+              <th class="mf-check-cell" data-i18n="tableWhitelist">白名单</th>
+              <th data-i18n="tableModelId">模型 ID</th>
+              <th data-i18n="tableModelName">名称</th>
+              <th data-i18n="tableContext">上下文</th>
+              <th data-i18n="tableResult">筛选结果</th>
             </tr>
           </thead>
           <tbody data-ref="modelRows"></tbody>
         </table>
       </div>
-      <div class="mf-empty" data-ref="empty" hidden>没有匹配的模型</div>
+      <div class="mf-empty" data-ref="empty" hidden></div>
     </section>
 
     <footer class="mf-action-bar">
-      <div class="mf-save-state" data-ref="saveState">正在读取 Provider 配置</div>
+      <div class="mf-save-state" data-ref="saveState"></div>
       <div class="mf-actions">
-        <button class="mf-button is-primary" data-ref="applyButton" type="button" disabled>应用策略到配置</button>
+        <button class="mf-button is-primary" data-ref="applyButton" type="button" disabled data-i18n="applyStrategy">应用策略到配置</button>
       </div>
     </footer>
 
     <dialog class="mf-dialog" data-ref="deleteDialog" aria-labelledby="mf-delete-title">
       <div class="mf-dialog-head">
         <h3 id="mf-delete-title" data-ref="deleteTitle">确认删除模型</h3>
-        <p data-ref="deleteDescription">应用后会替换当前 Provider 的模型列表。</p>
+        <p data-ref="deleteDescription"></p>
       </div>
       <div class="mf-dialog-body">
-        <p>请确认要移除的模型：</p>
+        <p data-i18n="confirmRemove">请确认要移除的模型：</p>
         <div class="mf-delete-list" data-ref="deleteList"></div>
         <div class="mf-reference-note" data-ref="deleteRefs" hidden></div>
         <div class="mf-reference-note" data-ref="sessionImpact" hidden>
@@ -205,8 +530,8 @@ const PAGE_MARKUP = `
         </div>
       </div>
       <div class="mf-dialog-actions">
-        <button class="mf-button" data-ref="cancelDelete" type="button">取消</button>
-        <button class="mf-button is-danger" data-ref="confirmDelete" type="button">确认应用并删除</button>
+        <button class="mf-button" data-ref="cancelDelete" type="button" data-i18n="cancel">取消</button>
+        <button class="mf-button is-danger" data-ref="confirmDelete" type="button" data-i18n="confirmApply">确认应用并删除</button>
       </div>
     </dialog>
   </div>
@@ -235,6 +560,7 @@ function manualIds(filter: ModelFilterConfig): Set<string> {
 export function analyzeModelFilter(
   models: readonly ModelView[],
   filter: ModelFilterConfig,
+  language: InterfaceLanguage = "zh",
 ): ModelFilterAnalysis {
   let include: RegExp | undefined;
   let exclude: RegExp | undefined;
@@ -244,7 +570,7 @@ export function analyzeModelFilter(
   } catch (error) {
     return {
       selected: new Set(),
-      error: `包含正则格式错误：${error instanceof Error ? error.message : String(error)}`,
+      error: messagesFor(language).includeError(messageForError(error)),
     };
   }
   try {
@@ -252,7 +578,7 @@ export function analyzeModelFilter(
   } catch (error) {
     return {
       selected: new Set(),
-      error: `排除正则格式错误：${error instanceof Error ? error.message : String(error)}`,
+      error: messagesFor(language).excludeError(messageForError(error)),
     };
   }
 
@@ -276,8 +602,9 @@ export function computeModelChanges(
   models: readonly ModelView[],
   configured: readonly ModelView[],
   filter: ModelFilterConfig,
+  language: InterfaceLanguage = "zh",
 ): ModelChanges {
-  const analysis = analyzeModelFilter(models, filter);
+  const analysis = analyzeModelFilter(models, filter, language);
   const configuredIds = configured.map((model) => model.id);
   const configuredSet = new Set(configuredIds);
   const finalSelected = new Set(analysis.selected);
@@ -304,19 +631,19 @@ function combineModelRows(
   return [...rows.values()];
 }
 
-function formatContext(value: number | undefined): string {
-  return value ? value.toLocaleString("zh-CN") : "-";
+function formatContext(value: number | undefined, language: InterfaceLanguage): string {
+  return value ? value.toLocaleString(language === "en" ? "en-US" : "zh-CN") : "-";
 }
 
-function formatAge(value: string | undefined): string {
-  if (!value) return "尚未获取";
+function formatAge(value: string | undefined, m: InterfaceMessages): string {
+  if (!value) return m.notFetched;
   const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds)) return "最近获取";
+  if (!Number.isFinite(milliseconds)) return m.recent;
   const seconds = Math.max(0, Math.floor((Date.now() - milliseconds) / 1_000));
-  if (seconds < 60) return "刚刚获取";
-  if (seconds < 3_600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)} 小时前`;
-  return `${Math.floor(seconds / 86_400)} 天前`;
+  if (seconds < 60) return m.justNow;
+  if (seconds < 3_600) return m.minutesAgo(Math.floor(seconds / 60));
+  if (seconds < 86_400) return m.hoursAgo(Math.floor(seconds / 3_600));
+  return m.daysAgo(Math.floor(seconds / 86_400));
 }
 
 function messageForError(error: unknown): string {
@@ -333,6 +660,8 @@ export function mountModelFetchSettings(
   options: ModelFetchSettingsOptions = {},
 ) {
   const document = container.ownerDocument;
+  const language = interfaceLanguage(context.host.locale);
+  const m = messagesFor(language);
   const feature = createFeatureClient(modelFetchContract, context.host);
   const drafts = new Map<string, DraftState>();
   const remotes = new Map<string, RemoteState>();
@@ -357,6 +686,7 @@ export function mountModelFetchSettings(
   container.innerHTML = PAGE_MARKUP;
   const page = container.querySelector<HTMLElement>(".mf-page");
   if (!page) throw new Error("Model Fetch page failed to mount.");
+  const pageElement = page;
 
   const refs = {
     providerSelect: page.querySelector<HTMLSelectElement>('[data-ref="providerSelect"]')!,
@@ -399,6 +729,33 @@ export function mountModelFetchSettings(
     confirmDelete: page.querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!,
   };
 
+  function applyStaticTexts() {
+    for (const element of pageElement.querySelectorAll<HTMLElement>("[data-i18n]")) {
+      const rawKey = element.getAttribute("data-i18n");
+      if (!rawKey) continue;
+      const value = m[rawKey as keyof InterfaceMessages];
+      if (typeof value === "string") element.textContent = value;
+    }
+    for (const element of pageElement.querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]")) {
+      const rawKey = element.getAttribute("data-i18n-placeholder");
+      if (!rawKey) continue;
+      const value = m[rawKey as keyof InterfaceMessages];
+      if (typeof value === "string") element.placeholder = value;
+    }
+    pageElement.querySelector<HTMLElement>(".mf-summary")?.setAttribute("aria-label", m.summaryLabel);
+    refs.providerSelect.setAttribute("aria-label", m.chooseProvider);
+    refs.retry.textContent = m.retry;
+    refs.fetchButton.textContent = m.fetchModels;
+    refs.saveButton.textContent = m.saveStrategy;
+    refs.applyButton.textContent = m.applyStrategy;
+    refs.cancelDelete.textContent = m.cancel;
+    refs.confirmDelete.textContent = m.confirmApply;
+    refs.deleteDescription.textContent = m.deleteDescriptionBase;
+    refs.empty.textContent = m.noMatches;
+  }
+
+  applyStaticTexts();
+
   function selectedProvider(): ProviderSummary | undefined {
     return providers.find((provider) => provider.id === currentId);
   }
@@ -408,7 +765,7 @@ export function mountModelFetchSettings(
   }
 
   function setError(next: string) {
-    error = next;
+    error = translateBackendError(next, language);
     notice = "";
   }
 
@@ -420,7 +777,8 @@ export function mountModelFetchSettings(
   function renderConnection() {
     const connected = context.host.connection.connected;
     refs.connection.classList.toggle("is-offline", !connected);
-    refs.connectionText.textContent = connected ? "Control UI 已连接" : "等待 Gateway 连接";
+    refs.connectionText.textContent = connected ? m.connected : m.waitingConnection;
+    refs.providerSelect.setAttribute("aria-label", m.chooseProvider);
   }
 
   function renderProviderSelect() {
@@ -438,14 +796,16 @@ export function mountModelFetchSettings(
 
   function updateRegexNotes(analysis: ModelFilterAnalysis) {
     const draft = currentDraft()?.filter;
-    const includeError = analysis.error.startsWith("包含正则");
-    const excludeError = analysis.error.startsWith("排除正则");
+    const includeRegexAnalysis = analyzeModelFilter([], { includeRegex: draft?.includeRegex, replace: true }, language);
+    const excludeRegexAnalysis = analyzeModelFilter([], { excludeRegex: draft?.excludeRegex, replace: true }, language);
+    const includeError = Boolean(includeRegexAnalysis.error);
+    const excludeError = Boolean(excludeRegexAnalysis.error);
     refs.includeRegex.setAttribute("aria-invalid", String(includeError));
     refs.excludeRegex.setAttribute("aria-invalid", String(excludeError));
     refs.includeNote.textContent =
-      includeError ? analysis.error : "留空时不按正则限制；若白名单也为空则选择全部模型。";
+      includeError ? includeRegexAnalysis.error : m.includeNote;
     refs.excludeNote.textContent =
-      excludeError ? analysis.error : "白名单中的模型不会被排除。";
+      excludeError ? excludeRegexAnalysis.error : m.excludeNote;
     refs.includeNote.classList.toggle("is-error", includeError);
     refs.excludeNote.classList.toggle("is-error", excludeError);
     if (draft) {
@@ -465,7 +825,7 @@ export function mountModelFetchSettings(
     if (ids.length === 0) {
       const empty = document.createElement("span");
       empty.className = "mf-chip-empty";
-      empty.textContent = "尚未选择手动白名单模型";
+      empty.textContent = m.whitelistEmpty;
       refs.whitelistBox.append(empty);
       return;
     }
@@ -477,7 +837,7 @@ export function mountModelFetchSettings(
       label.textContent = id;
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.setAttribute("aria-label", `从白名单移除 ${id}`);
+      remove.setAttribute("aria-label", m.removeWhitelist(id));
       remove.textContent = "×";
       remove.addEventListener("click", () => {
         const current = currentDraft();
@@ -504,7 +864,7 @@ export function mountModelFetchSettings(
     if (agents.length === 0) {
       const empty = document.createElement("span");
       empty.className = "mf-chip-empty";
-      empty.textContent = "未检测到可配置的 Agent";
+      empty.textContent = m.noAgents;
       refs.agentTargets.append(empty);
       return;
     }
@@ -518,7 +878,7 @@ export function mountModelFetchSettings(
       checkbox.className = "mf-model-check";
       checkbox.checked = selected.has(agent.id);
       checkbox.disabled = loading || saving || previewing || applying;
-      checkbox.setAttribute("aria-label", `覆盖 Agent ${agent.id} 的模型 allowlist`);
+      checkbox.setAttribute("aria-label", m.overrideAgent(agent.id));
       checkbox.addEventListener("change", () => {
         const current = currentDraft();
         if (!current) return;
@@ -532,7 +892,7 @@ export function mountModelFetchSettings(
       });
 
       const text = document.createElement("span");
-      const suffix = agent.hasModelAllowlist ? "" : "（未配置 allowlist）";
+      const suffix = agent.hasModelAllowlist ? "" : m.noAllowlist;
       text.textContent = `${agent.id}${suffix}`;
 
       label.append(checkbox, text);
@@ -568,7 +928,7 @@ export function mountModelFetchSettings(
       checkbox.className = "mf-model-check";
       checkbox.checked = manualSet.has(model.id);
       checkbox.disabled = !remote || fetching || loading;
-      checkbox.setAttribute("aria-label", `将 ${model.id} 加入白名单`);
+      checkbox.setAttribute("aria-label", m.addToWhitelist(model.id));
       checkbox.addEventListener("change", () => {
         const current = currentDraft();
         if (!current) return;
@@ -592,34 +952,34 @@ export function mountModelFetchSettings(
 
       const nameCell = document.createElement("td");
       nameCell.className = "mf-model-name";
-      nameCell.textContent = model.remote ? model.name : `${model.name}（配置中，远端未返回）`;
+      nameCell.textContent = model.remote ? model.name : m.configuredOnly(model.name);
 
       const contextCell = document.createElement("td");
       contextCell.className = "mf-model-context";
-      contextCell.textContent = formatContext(model.contextWindow);
+      contextCell.textContent = formatContext(model.contextWindow, language);
 
       const resultCell = document.createElement("td");
       const badge = document.createElement("span");
       badge.className = "mf-badge";
       if (regexError && model.remote) {
         badge.classList.add("is-removed");
-        badge.textContent = "等待修正正则";
+        badge.textContent = m.waitForRegex;
       } else if (protectedRefs.has(model.id)) {
         badge.classList.add("is-protected");
-        badge.textContent = "引用保护";
-        badge.title = `仍被以下配置引用，已保留：${(protectedRefs.get(model.id) ?? []).join("、")}`;
+        badge.textContent = m.referenceProtected;
+        badge.title = m.referenceProtectedTitle(protectedRefs.get(model.id) ?? []);
       } else if (removed.has(model.id)) {
         badge.classList.add("is-removed");
-        badge.textContent = "将删除";
+        badge.textContent = m.willDelete;
       } else if (manualSet.has(model.id)) {
         badge.classList.add("is-manual");
-        badge.textContent = "白名单";
+        badge.textContent = m.whitelistBadge;
       } else if (selected.has(model.id)) {
         badge.classList.add("is-selected");
-        badge.textContent = "已选择";
+        badge.textContent = m.selectedBadge;
       } else {
         badge.classList.add("is-muted");
-        badge.textContent = model.remote ? "未选中" : "已配置";
+        badge.textContent = model.remote ? m.unselected : m.configuredBadge;
       }
       resultCell.append(badge);
 
@@ -633,7 +993,7 @@ export function mountModelFetchSettings(
     const hasProvider = Boolean(selectedProvider());
     refs.fetchButton.disabled =
       !connected || !hasProvider || loading || fetching || saving || previewing || applying;
-    refs.fetchButton.textContent = fetching ? "正在获取..." : "获取远端模型";
+    refs.fetchButton.textContent = fetching ? m.fetchingModels : m.fetchModels;
     refs.saveButton.disabled =
       !connected ||
       !hasProvider ||
@@ -654,10 +1014,10 @@ export function mountModelFetchSettings(
       previewing ||
       applying;
     refs.applyButton.textContent = applying
-      ? "正在应用..."
+      ? m.applyingModels
       : previewing
-        ? "正在预览..."
-        : "应用策略到配置";
+        ? m.previewingModels
+        : m.applyStrategy;
     refs.confirmDelete.disabled = applying;
     refs.cancelDelete.disabled = applying;
   }
@@ -669,9 +1029,9 @@ export function mountModelFetchSettings(
     const filter = draft?.filter ?? provider?.filter ?? { replace: true };
     const remoteModels = remote?.models ?? [];
     const configuredModels = provider?.configuredModels ?? [];
-    const analysis = analyzeModelFilter(remoteModels, filter);
+    const analysis = analyzeModelFilter(remoteModels, filter, language);
     const changes = remote
-      ? computeModelChanges(remoteModels, configuredModels, filter)
+      ? computeModelChanges(remoteModels, configuredModels, filter, language)
       : {
           selected: new Set<string>(),
           addedIds: [],
@@ -686,12 +1046,12 @@ export function mountModelFetchSettings(
     renderProviderSelect();
     refs.configPath.textContent = provider?.configPath ?? "models.providers.<providerId>.models";
     refs.remoteCount.textContent = String(remoteModels.length);
-    refs.fetchAge.textContent = formatAge(remote?.fetchedAt);
+    refs.fetchAge.textContent = formatAge(remote?.fetchedAt, m);
     refs.selectedCount.textContent = String(changes.selected.size);
     refs.configuredCount.textContent = String(configuredModels.length);
     refs.changeCount.textContent = String(changes.addedIds.length + changes.removedIds.length);
     refs.changeDetail.textContent =
-      `新增 ${changes.addedIds.length} · 删除 ${changes.removedIds.length}`;
+      `${m.addedShort} ${changes.addedIds.length} · ${m.removedShort} ${changes.removedIds.length}`;
     updateRegexNotes(analysis);
     renderWhitelist(filter);
     renderAgentTargets(draft);
@@ -713,17 +1073,17 @@ export function mountModelFetchSettings(
     refs.retry.hidden = !error;
     refs.saveState.classList.toggle("is-dirty", Boolean(draft?.dirty));
     if (!providers.length && !loading) {
-      refs.saveState.textContent = "尚未配置任何可用的 Provider";
+      refs.saveState.textContent = m.noProviders;
     } else if (loading) {
-      refs.saveState.textContent = "正在读取 Provider 配置";
+      refs.saveState.textContent = m.readingProvider;
     } else if (analysis.error) {
-      refs.saveState.textContent = "请修正正则表达式后再保存或应用";
+      refs.saveState.textContent = m.fixRegex;
     } else if (draft?.dirty) {
-      refs.saveState.textContent = "有未保存的筛选策略，保存后才能应用";
+      refs.saveState.textContent = m.unsavedStrategy;
     } else if (notice) {
       refs.saveState.textContent = notice;
     } else {
-      refs.saveState.textContent = "策略已保存；应用时会重新获取远端模型并校验删除项";
+      refs.saveState.textContent = m.savedStrategy;
     }
     updateButtons(draft, analysis.error);
   }
@@ -808,7 +1168,7 @@ export function mountModelFetchSettings(
     const provider = selectedProvider();
     const draft = currentDraft();
     if (!provider || !draft || saving) return;
-    if (analyzeModelFilter([], draft.filter).error) return;
+    if (analyzeModelFilter([], draft.filter, language).error) return;
     saving = true;
     error = "";
     notice = "";
@@ -827,7 +1187,7 @@ export function mountModelFetchSettings(
         targetAgents: normalizeAgentTargets(output.targetAgents),
         dirty: false,
       });
-      setNotice(`${provider.label} 的筛选策略已保存`);
+      setNotice(m.savedNotice(provider.label));
     } catch (cause) {
       setError(messageForError(cause));
     } finally {
@@ -860,7 +1220,7 @@ export function mountModelFetchSettings(
     if (entries.length === 0) return;
 
     const heading = document.createElement("p");
-    heading.textContent = `以下 ${entries.length} 个模型仍被配置引用，将保留在列表中：`;
+    heading.textContent = m.referenceNote(entries.length);
     refs.deleteRefs.append(heading);
 
     for (const entry of entries) {
@@ -869,7 +1229,8 @@ export function mountModelFetchSettings(
       const ref = document.createElement("code");
       ref.textContent = entry.ref;
       const paths = document.createElement("span");
-      paths.textContent = entry.references.join("、");
+      paths.textContent =
+        language === "en" ? entry.references.join(", ") : entry.references.join("、");
       row.append(ref, paths);
       refs.deleteRefs.append(row);
     }
@@ -881,8 +1242,7 @@ export function mountModelFetchSettings(
     refs.sessionImpactTitle.textContent = "";
     if (entries.length === 0) return;
 
-    refs.sessionImpactTitle.textContent =
-      `受影响会话：应用后以下 ${entries.length} 个会话会回落到默认模型。`;
+    refs.sessionImpactTitle.textContent = m.sessionNote(entries.length);
     for (const entry of entries) {
       const row = document.createElement("div");
       row.className = "mf-reference-item";
@@ -924,19 +1284,22 @@ export function mountModelFetchSettings(
       await refreshProviders(false);
       const syncedSuffix =
         output.syncedAgents.length > 0
-          ? `；同步 Agent：${output.syncedAgents.join(", ")}`
+          ? m.syncedAgents(output.syncedAgents)
           : output.targetAgents.length > 0
-            ? "；目标 Agent 未更新（可能未配置 allowlist）"
+            ? m.targetAgentsNotUpdated
             : "";
       const protectedSuffix =
-        protectedModels.length > 0
-          ? `；引用保护保留 ${protectedModels.length} 个模型`
-          : "";
+        protectedModels.length > 0 ? m.protectedCount(protectedModels.length) : "";
       const resetCount = output.sessionSelectionResets ?? output.resetSessionKeys?.length ?? 0;
-      const sessionSuffix =
-        resetCount > 0 ? `；已回落 ${resetCount} 个会话到默认模型` : "";
+      const sessionSuffix = resetCount > 0 ? m.resetSessions(resetCount) : "";
       setNotice(
-        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}${protectedSuffix}${sessionSuffix}`,
+        m.applyNotice(
+          output.selectedIds.length,
+          provider.label,
+          output.added,
+          output.removed,
+          `${syncedSuffix}${protectedSuffix}${sessionSuffix}`,
+        ),
       );
       pendingPlan = null;
       if (typeof refs.deleteDialog.close === "function" && refs.deleteDialog.open) {
@@ -962,7 +1325,7 @@ export function mountModelFetchSettings(
     const provider = selectedProvider();
     const draft = currentDraft();
     if (!provider || !draft || draft.dirty || previewing || applying) return;
-    if (analyzeModelFilter([], draft.filter).error) return;
+    if (analyzeModelFilter([], draft.filter, language).error) return;
     previewing = true;
     error = "";
     notice = "";
@@ -993,9 +1356,9 @@ export function mountModelFetchSettings(
         return;
       }
 
-      refs.deleteTitle.textContent = `确认删除 ${output.plan.removedIds.length} 个模型`;
+      refs.deleteTitle.textContent = m.deleteTitle(output.plan.removedIds.length);
       refs.deleteDescription.textContent =
-        `应用后，${provider.label} 配置中的以下模型将被移除。`;
+        m.deleteDescriptionProvider(provider.label);
       refs.deleteList.replaceChildren();
       for (const id of output.plan.removedIds) {
         const code = document.createElement("code");
