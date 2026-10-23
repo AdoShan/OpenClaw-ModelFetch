@@ -98,6 +98,40 @@ function baseConfig(
   };
 }
 
+type FakeSessionEntry = {
+  sessionKey: string;
+  agentId: string;
+  entry: Record<string, unknown>;
+};
+
+function createSessionStore(
+  entries: FakeSessionEntry[],
+  options: { failingSessionKeys?: readonly string[] } = {},
+) {
+  const byKey = new Map(entries.map((item) => [item.sessionKey, item]));
+  const failing = new Set(options.failingSessionKeys ?? []);
+
+  const listSessionEntries = vi.fn(
+    ({ agentId }: { agentId?: string }) =>
+      entries
+        .filter(
+          (item) =>
+            item.agentId.toLowerCase() === (agentId ?? "").toLowerCase(),
+        )
+        .map((item) => ({ sessionKey: item.sessionKey, entry: item.entry })),
+  );
+  const getSessionEntryAsync = vi.fn(
+    async ({ sessionKey }: { sessionKey: string }) =>
+      byKey.get(sessionKey)?.entry,
+  );
+  const patchSessionEntry = vi.fn(async ({ sessionKey }: { sessionKey: string }) => {
+    if (failing.has(sessionKey)) throw new Error(`patch failed: ${sessionKey}`);
+    return {};
+  });
+
+  return { listSessionEntries, getSessionEntryAsync, patchSessionEntry };
+}
+
 describe("Control UI operations", () => {
   it("lists every provider with its own normalized strategy", async () => {
     const { api } = createApi(
@@ -329,21 +363,28 @@ describe("Control UI operations", () => {
       ),
     );
     const fetchModels = vi.fn(async () => [kept]);
-    const getSessionEntryAsync = vi.fn(async () => ({
-      providerOverride: "openrouter",
-      modelOverride: "stale/model",
-      modelProvider: "openrouter",
-      model: "stale/model",
-      modelSelectionLocked: false,
-    }));
-    const patchSessionEntry = vi.fn(async () => ({
-      providerOverride: undefined,
-      modelOverride: undefined,
-    }));
+    const { listSessionEntries, getSessionEntryAsync, patchSessionEntry } =
+      createSessionStore([
+        {
+          sessionKey: "agent:main:dashboard:test",
+          agentId: "main",
+          entry: {
+            providerOverride: "openrouter",
+            modelOverride: "stale/model",
+            modelProvider: "openrouter",
+            model: "stale/model",
+            modelSelectionLocked: false,
+          },
+        },
+      ]);
     const operations = createModelFetchOperations({
       api,
       fetchModels,
-      sessionStore: { getSessionEntryAsync, patchSessionEntry },
+      sessionStore: {
+        listSessionEntries,
+        getSessionEntryAsync,
+        patchSessionEntry,
+      },
     });
     const preview = await operations.previewApply("openrouter");
 
@@ -356,7 +397,8 @@ describe("Control UI operations", () => {
       { sessionKey: "agent:main:dashboard:test", agentId: "main" },
     );
 
-    expect(applied.sessionSelectionReset).toBe(true);
+    expect(applied.sessionSelectionResets).toBe(1);
+    expect(applied.resetSessionKeys).toEqual(["agent:main:dashboard:test"]);
     expect(getSessionEntryAsync).toHaveBeenCalledWith({
       sessionKey: "agent:main:dashboard:test",
       agentId: "main",
@@ -404,16 +446,26 @@ describe("Control UI operations", () => {
         { openrouter: { filter: { includeRegex: "^openai/" } } },
       ),
     );
-    const getSessionEntryAsync = vi.fn(async () => ({
-      modelProvider: "openrouter",
-      model: "stale/model",
-      modelSelectionLocked: false,
-    }));
-    const patchSessionEntry = vi.fn(async () => ({}));
+    const { listSessionEntries, getSessionEntryAsync, patchSessionEntry } =
+      createSessionStore([
+        {
+          sessionKey: "agent:main:runtime-only",
+          agentId: "main",
+          entry: {
+            modelProvider: "openrouter",
+            model: "stale/model",
+            modelSelectionLocked: false,
+          },
+        },
+      ]);
     const operations = createModelFetchOperations({
       api,
       fetchModels: vi.fn(async () => [kept]),
-      sessionStore: { getSessionEntryAsync, patchSessionEntry },
+      sessionStore: {
+        listSessionEntries,
+        getSessionEntryAsync,
+        patchSessionEntry,
+      },
     });
     const preview = await operations.previewApply("openrouter");
 
@@ -426,7 +478,8 @@ describe("Control UI operations", () => {
       { sessionKey: "agent:main:runtime-only", agentId: "main" },
     );
 
-    expect(applied.sessionSelectionReset).toBe(true);
+    expect(applied.sessionSelectionResets).toBe(1);
+    expect(applied.resetSessionKeys).toEqual(["agent:main:runtime-only"]);
     const patch = patchSessionEntry.mock.calls[0][0] as {
       update: () => Record<string, unknown>;
     };
@@ -454,16 +507,26 @@ describe("Control UI operations", () => {
         { openrouter: { filter: { includeRegex: "^openai/" } } },
       ),
     );
-    const getSessionEntryAsync = vi.fn(async () => ({
-      providerOverride: "openrouter",
-      modelOverride: "stale/model",
-      modelSelectionLocked: true,
-    }));
-    const patchSessionEntry = vi.fn(async () => ({}));
+    const { listSessionEntries, getSessionEntryAsync, patchSessionEntry } =
+      createSessionStore([
+        {
+          sessionKey: "agent:main:locked",
+          agentId: "main",
+          entry: {
+            providerOverride: "openrouter",
+            modelOverride: "stale/model",
+            modelSelectionLocked: true,
+          },
+        },
+      ]);
     const operations = createModelFetchOperations({
       api,
       fetchModels: vi.fn(async () => [kept]),
-      sessionStore: { getSessionEntryAsync, patchSessionEntry },
+      sessionStore: {
+        listSessionEntries,
+        getSessionEntryAsync,
+        patchSessionEntry,
+      },
     });
     const preview = await operations.previewApply("openrouter");
 
@@ -476,8 +539,285 @@ describe("Control UI operations", () => {
       { sessionKey: "agent:main:locked", agentId: "main" },
     );
 
-    expect(applied.sessionSelectionReset).toBe(false);
+    expect(applied.sessionSelectionResets).toBe(0);
+    expect(applied.resetSessionKeys).toEqual([]);
     expect(patchSessionEntry).not.toHaveBeenCalled();
+  });
+
+  it("clears stale selections across every agent and session", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api } = createApi({
+      agents: { entries: { main: {}, scout: {} } },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        { openrouter: { filter: { includeRegex: "^openai/" } } },
+      ),
+    });
+    const fetchModels = vi.fn(async () => [kept]);
+    const sessionStore = createSessionStore([
+      {
+        sessionKey: "agent:main:dashboard:a",
+        agentId: "main",
+        entry: {
+          providerOverride: "openrouter",
+          modelOverride: "stale/model",
+          label: "Main A",
+        },
+      },
+      {
+        sessionKey: "agent:main:dashboard:b",
+        agentId: "main",
+        entry: { modelProvider: "openrouter", model: "stale/model" },
+      },
+      {
+        sessionKey: "agent:scout:dashboard:c",
+        agentId: "scout",
+        entry: { modelOverride: "openrouter/stale/model" },
+      },
+      {
+        sessionKey: "agent:scout:dashboard:d",
+        agentId: "scout",
+        entry: {
+          providerOverride: "openrouter",
+          modelOverride: "stale/model",
+          modelSelectionLocked: true,
+        },
+      },
+    ]);
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels,
+      sessionStore,
+    });
+
+    const preview = await operations.previewApply("openrouter");
+
+    expect(preview.plan.affectedSessions).toEqual([
+      {
+        sessionKey: "agent:main:dashboard:a",
+        agentId: "main",
+        label: "Main A",
+      },
+      {
+        sessionKey: "agent:main:dashboard:b",
+        agentId: "main",
+        label: "agent:main:dashboard:b",
+      },
+      {
+        sessionKey: "agent:scout:dashboard:c",
+        agentId: "scout",
+        label: "agent:scout:dashboard:c",
+      },
+    ]);
+    expect(sessionStore.listSessionEntries).toHaveBeenCalledWith({
+      agentId: "main",
+      readOnly: true,
+    });
+    expect(sessionStore.listSessionEntries).toHaveBeenCalledWith({
+      agentId: "scout",
+      readOnly: true,
+    });
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["stale/model"],
+    });
+
+    expect(applied.sessionSelectionResets).toBe(3);
+    expect(applied.resetSessionKeys).toEqual([
+      "agent:main:dashboard:a",
+      "agent:main:dashboard:b",
+      "agent:scout:dashboard:c",
+    ]);
+    expect(sessionStore.patchSessionEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:scout:dashboard:c",
+        agentId: "scout",
+        preserveActivity: true,
+      }),
+    );
+    expect(sessionStore.patchSessionEntry).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey: "agent:scout:dashboard:d" }),
+    );
+  });
+
+  it("only clears the override fields when only the full model id was stored", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api } = createApi({
+      agents: { entries: { main: {} } },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        { openrouter: { filter: { includeRegex: "^openai/" } } },
+      ),
+    });
+    const sessionStore = createSessionStore([
+      {
+        sessionKey: "agent:main:dashboard:full-id",
+        agentId: "main",
+        entry: { modelOverride: "openrouter/stale/model" },
+      },
+    ]);
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [kept]),
+      sessionStore,
+    });
+    const preview = await operations.previewApply("openrouter");
+
+    expect(preview.plan.affectedSessions).toEqual([
+      {
+        sessionKey: "agent:main:dashboard:full-id",
+        agentId: "main",
+        label: "agent:main:dashboard:full-id",
+      },
+    ]);
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["stale/model"],
+    });
+
+    expect(applied.sessionSelectionResets).toBe(1);
+    const patch = sessionStore.patchSessionEntry.mock.calls[0][0] as {
+      update: () => Record<string, unknown>;
+    };
+    expect(patch.update()).toEqual({
+      providerOverride: undefined,
+      modelOverride: undefined,
+      modelOverrideSource: undefined,
+      modelOverrideRouteResolution: undefined,
+      modelOverrideFallbackOriginProvider: undefined,
+      modelOverrideFallbackOriginModel: undefined,
+    });
+  });
+
+  it("re-checks the model lock before patching a session", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api } = createApi({
+      agents: { entries: { main: {} } },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        { openrouter: { filter: { includeRegex: "^openai/" } } },
+      ),
+    });
+    const listSessionEntries = vi.fn(() => [
+      {
+        sessionKey: "agent:main:dashboard:race",
+        entry: {
+          providerOverride: "openrouter",
+          modelOverride: "stale/model",
+          modelSelectionLocked: false,
+        },
+      },
+    ]);
+    const getSessionEntryAsync = vi.fn(async () => ({
+      providerOverride: "openrouter",
+      modelOverride: "stale/model",
+      modelSelectionLocked: true,
+    }));
+    const patchSessionEntry = vi.fn(async () => ({}));
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [kept]),
+      sessionStore: {
+        listSessionEntries,
+        getSessionEntryAsync,
+        patchSessionEntry,
+      },
+    });
+    const preview = await operations.previewApply("openrouter");
+
+    expect(preview.plan.affectedSessions).toHaveLength(1);
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["stale/model"],
+    });
+
+    expect(applied.sessionSelectionResets).toBe(0);
+    expect(applied.resetSessionKeys).toEqual([]);
+    expect(patchSessionEntry).not.toHaveBeenCalled();
+  });
+
+  it("counts only the sessions that were reset successfully", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api } = createApi({
+      agents: { entries: { main: {} } },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        { openrouter: { filter: { includeRegex: "^openai/" } } },
+      ),
+    });
+    const sessionStore = createSessionStore(
+      [
+        {
+          sessionKey: "agent:main:dashboard:ok",
+          agentId: "main",
+          entry: {
+            providerOverride: "openrouter",
+            modelOverride: "stale/model",
+          },
+        },
+        {
+          sessionKey: "agent:main:dashboard:broken",
+          agentId: "main",
+          entry: {
+            providerOverride: "openrouter",
+            modelOverride: "stale/model",
+          },
+        },
+      ],
+      { failingSessionKeys: ["agent:main:dashboard:broken"] },
+    );
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [kept]),
+      sessionStore,
+    });
+    const preview = await operations.previewApply("openrouter");
+
+    expect(preview.plan.affectedSessions).toHaveLength(2);
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["stale/model"],
+    });
+
+    expect(applied.sessionSelectionResets).toBe(1);
+    expect(applied.resetSessionKeys).toEqual(["agent:main:dashboard:ok"]);
+    expect(sessionStore.patchSessionEntry).toHaveBeenCalledTimes(2);
   });
 
   it("adds applied models to modelPolicy.allow when allowlist is configured", async () => {

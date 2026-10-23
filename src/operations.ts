@@ -7,6 +7,7 @@ import type {
 } from "openclaw/plugin-sdk/core";
 import {
   getSessionEntryAsync,
+  listSessionEntries,
   patchSessionEntry,
   type SessionEntry,
 } from "openclaw/plugin-sdk/session-store-runtime";
@@ -30,6 +31,7 @@ import {
   type ProviderLike,
 } from "./model-fetch.js";
 import type {
+  AffectedSession,
   ApplyPlan,
   AgentSummary,
   ApplyStrategyInput,
@@ -90,7 +92,22 @@ type SessionSelectionScope = {
 type SessionStoreRuntime = {
   getSessionEntryAsync: typeof getSessionEntryAsync;
   patchSessionEntry: typeof patchSessionEntry;
+  listSessionEntries: typeof listSessionEntries;
 };
+
+type SessionEntryCandidate = {
+  sessionKey: string;
+  agentId: string;
+  entry: SessionEntry;
+};
+
+type SessionResetTarget = {
+  sessionKey: string;
+  agentId: string;
+};
+
+const AFFECTED_SESSION_LIMIT = 2_000;
+const DEFAULT_AGENT_ID = "main";
 
 export type ModelFetchOperations = ReturnType<typeof createModelFetchOperations>;
 
@@ -193,53 +210,92 @@ function staleOverrideMatches(
   return entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
 }
 
-async function resetStaleSessionSelection({
-  scope,
+/**
+ * Session keys are stored as `agent:<agentId>:<rest>`. The agent id prefix is
+ * case insensitive, and only the leading ownership segment is parsed.
+ */
+function parseAgentIdFromSessionKey(sessionKey: string): string | undefined {
+  const raw = sessionKey?.trim() ?? "";
+  if (raw.length < 7 || raw.slice(0, 6).toLowerCase() !== "agent:") return undefined;
+  const separator = raw.indexOf(":", 6);
+  if (separator === -1) return undefined;
+  const agentId = raw.slice(6, separator).trim();
+  const rest = raw.slice(separator + 1);
+  if (!agentId || !rest || rest.startsWith(":")) return undefined;
+  return agentId;
+}
+
+/**
+ * The cleared fields of one stale session selection. A session that only kept
+ * the runtime model also loses its runtime context bookkeeping.
+ */
+function staleSelectionResetUpdate(
+  entry: SessionEntry,
+  providerId: string,
+  removedIds: readonly string[],
+): Partial<SessionEntry> {
+  const runtimeModelMatches =
+    entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
+  return {
+    providerOverride: undefined,
+    modelOverride: undefined,
+    modelOverrideSource: undefined,
+    modelOverrideRouteResolution: undefined,
+    modelOverrideFallbackOriginProvider: undefined,
+    modelOverrideFallbackOriginModel: undefined,
+    ...(runtimeModelMatches
+      ? {
+          model: undefined,
+          modelProvider: undefined,
+          contextTokens: undefined,
+          contextTokensSource: undefined,
+          contextBudgetStatus: undefined,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Clears the stale selection of every listed session. Each session is read
+ * again right before it is patched so a lock taken after the preview is
+ * honoured, and one failing session never stops the remaining ones.
+ */
+async function resetStaleSessionSelections({
+  candidates,
   providerId,
   removedIds,
   sessionStore,
 }: {
-  scope: SessionSelectionScope;
+  candidates: readonly SessionResetTarget[];
   providerId: string;
   removedIds: readonly string[];
   sessionStore: SessionStoreRuntime;
-}): Promise<boolean> {
-  const sessionKey = scope.sessionKey?.trim();
-  if (!sessionKey || removedIds.length === 0) return false;
+}): Promise<string[]> {
+  const resetSessionKeys: string[] = [];
+  if (removedIds.length === 0) return resetSessionKeys;
 
-  const entry = await sessionStore.getSessionEntryAsync({
-    sessionKey,
-    agentId: scope.agentId,
-  });
-  if (!entry || entry.modelSelectionLocked === true) return false;
-  if (!staleOverrideMatches(entry, providerId, removedIds)) return false;
+  for (const candidate of candidates) {
+    try {
+      const latest = await sessionStore.getSessionEntryAsync({
+        sessionKey: candidate.sessionKey,
+        agentId: candidate.agentId,
+      });
+      if (!latest || latest.modelSelectionLocked === true) continue;
+      if (!staleOverrideMatches(latest, providerId, removedIds)) continue;
 
-  const runtimeModelMatches =
-    entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
-  const updated = await sessionStore.patchSessionEntry({
-    sessionKey,
-    agentId: scope.agentId,
-    preserveActivity: true,
-    update: () => ({
-      providerOverride: undefined,
-      modelOverride: undefined,
-      modelOverrideSource: undefined,
-      modelOverrideRouteResolution: undefined,
-      modelOverrideFallbackOriginProvider: undefined,
-      modelOverrideFallbackOriginModel: undefined,
-      ...(runtimeModelMatches
-        ? {
-            model: undefined,
-            modelProvider: undefined,
-            contextTokens: undefined,
-            contextTokensSource: undefined,
-            contextBudgetStatus: undefined,
-          }
-        : {}),
-    }),
-  });
+      const updated = await sessionStore.patchSessionEntry({
+        sessionKey: candidate.sessionKey,
+        agentId: candidate.agentId,
+        preserveActivity: true,
+        update: () => staleSelectionResetUpdate(latest, providerId, removedIds),
+      });
+      if (updated) resetSessionKeys.push(candidate.sessionKey);
+    } catch {
+      // A single failing session must not abort the remaining cleanups.
+    }
+  }
 
-  return Boolean(updated);
+  return resetSessionKeys;
 }
 
 function ensurePluginEntry(
@@ -272,7 +328,7 @@ export function createModelFetchOperations({
   factoryConfig,
   fetchModels = fetchProviderModels,
   now = () => new Date(),
-  sessionStore = { getSessionEntryAsync, patchSessionEntry },
+  sessionStore = { getSessionEntryAsync, patchSessionEntry, listSessionEntries },
 }: {
   api: OpenClawPluginApi;
   factoryConfig?: ModelFetchConfig;
@@ -292,6 +348,146 @@ export function createModelFetchOperations({
 
   function savedTargetAgents(providerId: string, config = currentConfig()): string[] {
     return normalizeTargetAgents(resolveProviderTargetAgents(providerId, config, factoryConfig));
+  }
+
+  function configuredAgentIds(config = currentConfig()): string[] {
+    const entries = (config as MutableConfig | undefined)?.agents?.entries ?? {};
+    return Object.keys(entries).filter((agentId) => agentId.trim().length > 0);
+  }
+
+  /**
+   * Lists the sessions of every candidate agent. `listSessionEntries` is
+   * agent scoped, so agents discovered inside the returned session keys are
+   * scanned as well.
+   */
+  async function collectSessionEntries(
+    agentIds: readonly string[],
+  ): Promise<SessionEntryCandidate[]> {
+    const candidates: SessionEntryCandidate[] = [];
+    const visited = new Set<string>();
+    const queue = [...agentIds];
+
+    while (queue.length > 0) {
+      const agentId = (queue.shift() ?? "").trim();
+      if (!agentId) continue;
+      const normalized = agentId.toLowerCase();
+      if (visited.has(normalized)) continue;
+      visited.add(normalized);
+
+      let summaries: Awaited<ReturnType<SessionStoreRuntime["listSessionEntries"]>> = [];
+      try {
+        summaries = await sessionStore.listSessionEntries({
+          agentId,
+          readOnly: true,
+        });
+      } catch {
+        // One unreadable agent store must not stop the remaining ones.
+        continue;
+      }
+
+      for (const summary of summaries ?? []) {
+        const sessionKey = summary?.sessionKey;
+        if (!sessionKey) continue;
+        const parsedAgentId = parseAgentIdFromSessionKey(sessionKey);
+        candidates.push({
+          sessionKey,
+          agentId: parsedAgentId ?? agentId,
+          entry: summary.entry,
+        });
+        if (parsedAgentId && !visited.has(parsedAgentId.toLowerCase())) {
+          queue.push(parsedAgentId);
+        }
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Sessions whose persisted model selection points at a model that the plan
+   * removes. Locked sessions are never reported as affected.
+   */
+  function collectAffectedSessions(
+    candidates: readonly SessionEntryCandidate[],
+    providerId: string,
+    removedIds: readonly string[],
+  ): AffectedSession[] {
+    const affected: AffectedSession[] = [];
+    const seen = new Set<string>();
+
+    for (const candidate of candidates) {
+      if (affected.length >= AFFECTED_SESSION_LIMIT) break;
+      const entry = candidate.entry;
+      if (!entry) continue;
+      if (entry.modelSelectionLocked === true) continue;
+      if (!staleOverrideMatches(entry, providerId, removedIds)) continue;
+
+      const dedupeKey = `${candidate.agentId.toLowerCase()}::${candidate.sessionKey}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      affected.push({
+        sessionKey: candidate.sessionKey,
+        agentId: candidate.agentId,
+        label: entry.label || entry.displayName || candidate.sessionKey,
+      });
+    }
+
+    return affected;
+  }
+
+  /**
+   * Every session across the known agents whose selection becomes stale.
+   * `main` is always scanned, the calling agent is added when known, and
+   * agents are additionally derived from the session keys themselves.
+   */
+  async function affectedSessionsFor({
+    providerId,
+    removedIds,
+    scope,
+  }: {
+    providerId: string;
+    removedIds: readonly string[];
+    scope: SessionSelectionScope;
+  }): Promise<AffectedSession[]> {
+    if (removedIds.length === 0) return [];
+
+    const agentIds = new Set<string>([DEFAULT_AGENT_ID]);
+    const scopeAgentId = scope.agentId?.trim();
+    if (scopeAgentId) agentIds.add(scopeAgentId);
+    const scopedKeyAgentId = scope.sessionKey
+      ? parseAgentIdFromSessionKey(scope.sessionKey)
+      : undefined;
+    if (scopedKeyAgentId) agentIds.add(scopedKeyAgentId);
+    for (const agentId of configuredAgentIds()) agentIds.add(agentId);
+
+    const candidates = await collectSessionEntries([...agentIds]);
+
+    const scopedSessionKey = scope.sessionKey?.trim();
+    const scopedOwnerId = scopeAgentId ?? scopedKeyAgentId;
+    if (scopedSessionKey && scopedOwnerId) {
+      const known = candidates.some(
+        (candidate) => candidate.sessionKey === scopedSessionKey,
+      );
+      if (!known) {
+        try {
+          const entry = await sessionStore.getSessionEntryAsync({
+            sessionKey: scopedSessionKey,
+            agentId: scopedOwnerId,
+          });
+          if (entry) {
+            candidates.push({
+              sessionKey: scopedSessionKey,
+              agentId: scopedOwnerId,
+              entry,
+            });
+          }
+        } catch {
+          // The scoped session is optional; ignore unreadable entries.
+        }
+      }
+    }
+
+    return collectAffectedSessions(candidates, providerId, removedIds);
   }
 
   /**
@@ -475,8 +671,16 @@ export function createModelFetchOperations({
     };
   }
 
-  async function previewApply(provider: string): Promise<PreviewApplyOutput> {
+  async function previewApply(
+    provider: string,
+    scope: SessionSelectionScope = {},
+  ): Promise<PreviewApplyOutput> {
     const computed = await computePlan(provider);
+    const affectedSessions = await affectedSessionsFor({
+      providerId: provider,
+      removedIds: computed.removedIds,
+      scope,
+    });
     const plan: ApplyPlan = {
       fingerprint: computed.fingerprint,
       fetchedAt: computed.fetchedAt,
@@ -486,6 +690,7 @@ export function createModelFetchOperations({
       protectedModels: computed.protectedModels,
       selectedIds: computed.selectedIds,
       unchangedCount: computed.unchangedCount,
+      affectedSessions,
     };
     return {
       provider,
@@ -547,15 +752,22 @@ export function createModelFetchOperations({
       },
     });
 
-    let sessionSelectionReset = false;
-    if (scope.sessionKey) {
-      sessionSelectionReset = await resetStaleSessionSelection({
-        scope,
-        providerId: provider,
-        removedIds: computed.removedIds,
-        sessionStore,
-      });
-    }
+    // The session list is re-read after the write so the cleanup sees the
+    // latest state and honours locks taken since the preview.
+    const affectedSessions = await affectedSessionsFor({
+      providerId: provider,
+      removedIds: computed.removedIds,
+      scope,
+    });
+    const resetSessionKeys = await resetStaleSessionSelections({
+      candidates: affectedSessions.map((session) => ({
+        sessionKey: session.sessionKey,
+        agentId: session.agentId,
+      })),
+      providerId: provider,
+      removedIds: computed.removedIds,
+      sessionStore,
+    });
 
     return {
       provider,
@@ -570,7 +782,8 @@ export function createModelFetchOperations({
       protectedModels: computed.protectedModels,
       targetAgents: nextTargetAgents,
       syncedAgents,
-      sessionSelectionReset,
+      sessionSelectionResets: resetSessionKeys.length,
+      resetSessionKeys,
       models: computed.models,
     };
   }
@@ -611,8 +824,11 @@ export function registerModelFetchOperations(
     "models.fetch": (input) =>
       operations.fetchModels((input as { provider: string }).provider),
     "strategy.save": (input) => operations.saveStrategy(input as SaveStrategyInput),
-    "strategy.preview": (input) =>
-      operations.previewApply((input as { provider: string }).provider),
+    "strategy.preview": (input, context) =>
+      operations.previewApply((input as { provider: string }).provider, {
+        sessionKey: context.sessionKey,
+        agentId: context.agentId,
+      }),
     "strategy.apply": (input, context) =>
       operations.applyStrategy(input as ApplyStrategyInput, {
         sessionKey: context.sessionKey,

@@ -229,6 +229,21 @@ export const saveStrategyInputSchema = Type.Object(
 
 export type SaveStrategyInput = Static<typeof saveStrategyInputSchema>;
 
+/**
+ * One session whose stale model selection will be cleared when the plan is
+ * applied. `label` is a human readable fallback for the session key.
+ */
+export const affectedSessionSchema = Type.Object(
+  {
+    sessionKey: Type.String({ minLength: 1, maxLength: 512 }),
+    agentId: Type.String({ minLength: 1, maxLength: 128 }),
+    label: Type.String({ minLength: 1, maxLength: 512 }),
+  },
+  { additionalProperties: false },
+);
+
+export type AffectedSession = Static<typeof affectedSessionSchema>;
+
 export const applyPlanSchema = Type.Object(
   {
     fingerprint: Type.String({ minLength: 64, maxLength: 64 }),
@@ -239,6 +254,7 @@ export const applyPlanSchema = Type.Object(
     protectedModels: Type.Array(protectedModelSchema, { maxItems: 2_000 }),
     selectedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     unchangedCount: Type.Integer({ minimum: 0 }),
+    affectedSessions: Type.Array(affectedSessionSchema, { maxItems: 2_000 }),
   },
   { additionalProperties: false },
 );
@@ -293,7 +309,11 @@ export const applyStrategyOutputSchema = Type.Object(
       maxItems: 256,
       uniqueItems: true,
     }),
-    sessionSelectionReset: Type.Boolean(),
+    sessionSelectionResets: Type.Integer({ minimum: 0 }),
+    resetSessionKeys: Type.Array(Type.String({ minLength: 1, maxLength: 512 }), {
+      maxItems: 2_000,
+      uniqueItems: true,
+    }),
     models: Type.Array(modelViewSchema, { maxItems: 2_000 }),
   },
   { additionalProperties: false },

@@ -5,18 +5,13 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      dry-run:
-        description: Verify everything but do not publish to npm
-        type: boolean
-        default: true
 
 permissions:
   contents: write
   id-token: write
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish
   cancel-in-progress: false
 
 jobs:
@@ -24,6 +19,7 @@ jobs:
     name: Build, Verify, Publish to npm (OIDC)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    if: github.repository == 'AdoShan/OpenClaw-ModelFetch'
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -61,12 +57,21 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION="$(node -p "require('./package.json').version")"
-          if npm view "openclaw-plugin-model-fetch@${VERSION}" version >/dev/null 2>&1; then
+          set +e
+          OUTPUT="$(npm view "openclaw-plugin-model-fetch@${VERSION}" version 2>&1)"
+          STATUS=$?
+          set -e
+
+          if [ "$STATUS" -eq 0 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Version ${VERSION} is already published; npm publish will be skipped."
-          else
+          elif printf '%s' "$OUTPUT" | grep -q 'code E404'; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Version ${VERSION} is not published yet."
+          else
+            echo "::error::Unable to determine whether version ${VERSION} is published"
+            printf '%s\n' "$OUTPUT"
+            exit 1
           fi
 
       - name: Typecheck
@@ -81,18 +86,75 @@ jobs:
       - name: Validate plugin
         run: npm run plugin:validate
 
+      - name: Create draft GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body: |
+            # Model Fetch v0.2.4
+
+            Applying a provider strategy now clears stale model selections across every configured agent and session, while the release pipeline publishes npm and GitHub Releases from the same immutable tag.
+
+            ## Fixes
+
+            - **All affected sessions are reset together.** Model Fetch now scans sessions across all configured agents instead of only the current WebUI session. The confirmation dialog lists every session that will fall back to the default model, and the apply result reports how many sessions were reset.
+            - **Stale sessions are handled safely.** Locked sessions are always skipped, each session is rechecked immediately before it is patched, and one failed session does not stop the remaining cleanups.
+            - **Release publishing is single-track.** Real npm publishing is restricted to `vX.Y.Z` tag pushes, all releases share one concurrency queue, npm availability is checked with a fail-closed error policy, and GitHub Releases are created as drafts before npm publishing and published only after verification and publishing succeed.
+
+            ## Compatibility
+
+            - No configuration migration is required.
+            - The provider replacement behavior remains intentional: models that do not pass the saved filter are removed after confirmation.
+            - Requires OpenClaw `2026.10.5` or newer.
+
+            ## Verification
+
+            - `npm test` — 70 tests passed.
+            - `npm run typecheck` — passed.
+            - `npm run plugin:validate` — passed.
+            - Manual WebUI verification confirmed affected sessions are listed before applying and reset after applying.
+
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.3...v0.2.4
+          draft: true
+          generate_release_notes: false
+
       - name: Publish dry run
-        if: (github.event_name == 'push' || inputs.dry-run != false) && steps.published.outputs.exists != 'true'
+        if: startsWith(github.ref, 'refs/tags/v') && steps.published.outputs.exists != 'true'
         run: npm publish --dry-run --access public
 
       - name: Publish to npm via Trusted Publishing
-        if: (github.event_name == 'push' || inputs.dry-run == false) && steps.published.outputs.exists != 'true'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && steps.published.outputs.exists != 'true'
         run: npm publish --access public --provenance
 
       - name: Publish GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          body_path: .github/release-notes/${{ github.ref_name }}.md
+          body: |
+            # Model Fetch v0.2.4
+
+            Applying a provider strategy now clears stale model selections across every configured agent and session, while the release pipeline publishes npm and GitHub Releases from the same immutable tag.
+
+            ## Fixes
+
+            - **All affected sessions are reset together.** Model Fetch now scans sessions across all configured agents instead of only the current WebUI session. The confirmation dialog lists every session that will fall back to the default model, and the apply result reports how many sessions were reset.
+            - **Stale sessions are handled safely.** Locked sessions are always skipped, each session is rechecked immediately before it is patched, and one failed session does not stop the remaining cleanups.
+            - **Release publishing is single-track.** Real npm publishing is restricted to `vX.Y.Z` tag pushes, all releases share one concurrency queue, npm availability is checked with a fail-closed error policy, and GitHub Releases are created as drafts before npm publishing and published only after verification and publishing succeed.
+
+            ## Compatibility
+
+            - No configuration migration is required.
+            - The provider replacement behavior remains intentional: models that do not pass the saved filter are removed after confirmation.
+            - Requires OpenClaw `2026.10.5` or newer.
+
+            ## Verification
+
+            - `npm test` — 70 tests passed.
+            - `npm run typecheck` — passed.
+            - `npm run plugin:validate` — passed.
+            - Manual WebUI verification confirmed affected sessions are listed before applying and reset after applying.
+
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.3...v0.2.4
           generate_release_notes: false
+          draft: false
           make_latest: true

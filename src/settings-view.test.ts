@@ -14,6 +14,16 @@ import type {
   PreviewApplyOutput,
 } from "./schemas.js";
 
+type AffectedSession = {
+  sessionKey: string;
+  agentId: string;
+  label: string;
+};
+
+type ApplyPlanWithSessions = ApplyPlan & {
+  affectedSessions?: AffectedSession[];
+};
+
 const openRouterModels: ModelView[] = [
   { id: "openai/gpt-4o", name: "GPT-4o", contextWindow: 128_000 },
   { id: "anthropic/claude", name: "Claude", contextWindow: 200_000 },
@@ -67,7 +77,7 @@ function fetchOutput(provider = "openrouter"): FetchModelsOutput {
   };
 }
 
-function applyPlan(overrides: Partial<ApplyPlan> = {}): ApplyPlan {
+function applyPlan(overrides: Partial<ApplyPlanWithSessions> = {}): ApplyPlanWithSessions {
   return {
     fingerprint: "a".repeat(64),
     fetchedAt: "2026-10-21T06:00:00.000Z",
@@ -77,6 +87,7 @@ function applyPlan(overrides: Partial<ApplyPlan> = {}): ApplyPlan {
     protectedModels: [],
     selectedIds: openRouterModels.map((model) => model.id),
     unchangedCount: 1,
+    affectedSessions: [],
     ...overrides,
   };
 }
@@ -113,6 +124,8 @@ function createHarness() {
     selectedIds: openRouterModels.map((model) => model.id),
     targetAgents: ["main"],
     syncedAgents: ["main"],
+    sessionSelectionResets: 0,
+    resetSessionKeys: [],
     models: openRouterModels,
   }));
 
@@ -508,6 +521,178 @@ describe("Model Fetch settings view", () => {
     expect(referenceNote.textContent).toContain("hooks.gmail.model");
     expect(modelBadge(harness, "stale/model")?.textContent).toBe("引用保护");
     expect(modelBadge(harness, "stale/model")?.title).toContain("hooks.gmail.model");
+  });
+
+  it("lists the affected sessions in the delete confirmation", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          affectedSessions: [
+            {
+              sessionKey: "agent:main:browser",
+              agentId: "main",
+              label: "浏览器主会话",
+            },
+            {
+              sessionKey: "agent:worker:cli",
+              agentId: "worker",
+              label: "Worker CLI",
+            },
+          ],
+        }),
+        models: openRouterModels,
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const impact = harness.container.querySelector<HTMLElement>(
+      '[data-ref="sessionImpact"]',
+    )!;
+    expect(impact.hasAttribute("hidden")).toBe(false);
+    expect(impact.textContent).toContain("受影响会话");
+    expect(impact.textContent).toContain("浏览器主会话");
+    expect(impact.textContent).toContain("Worker CLI");
+    expect(
+      [...impact.querySelectorAll("code")].map((node) => node.textContent),
+    ).toEqual(["agent:main:browser", "agent:worker:cli"]);
+  });
+
+  it("hides the affected sessions block when no session is affected", async () => {
+    const harness = createHarness();
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const impact = harness.container.querySelector<HTMLElement>(
+      '[data-ref="sessionImpact"]',
+    )!;
+    expect(impact.hasAttribute("hidden")).toBe(true);
+    expect(impact.textContent?.trim()).toBe("");
+    expect(impact.querySelectorAll("code")).toHaveLength(0);
+  });
+
+  it("reports how many sessions fell back to the default model", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.apply", async () => ({
+      provider: "openrouter",
+      persisted: true,
+      configPath: "/tmp/openclaw.json",
+      fetchedAt: "2026-10-21T06:00:00.000Z",
+      fetchedCount: 3,
+      added: 1,
+      unchanged: 1,
+      removed: 1,
+      selectedIds: openRouterModels.map((model) => model.id),
+      targetAgents: ["main"],
+      syncedAgents: ["main"],
+      sessionSelectionResets: 1,
+      resetSessionKeys: ["agent:main:browser"],
+      models: openRouterModels,
+    }));
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(harness.container.querySelector('[data-ref="saveState"]')?.textContent).toContain(
+        "已回落 1 个会话到默认模型",
+      );
+    });
+    expect(harness.container.querySelector('[data-ref="saveState"]')?.textContent).not.toContain(
+      "当前会话已回落到默认模型",
+    );
+  });
+
+  it("omits the session fallback notice when no session was reset", async () => {
+    const harness = createHarness();
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(
+        harness.requests.some((request) => request.actionId === "strategy.apply"),
+      ).toBe(true);
+    });
+    await vi.waitFor(() => {
+      const state = harness.container.querySelector('[data-ref="saveState"]')?.textContent ?? "";
+      expect(state).toContain("已将");
+      expect(state).not.toContain("已回落");
+    });
+  });
+
+  it("reports the session fallback count for multiple sessions", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.apply", async () => ({
+      provider: "openrouter",
+      persisted: true,
+      configPath: "/tmp/openclaw.json",
+      fetchedAt: "2026-10-21T06:00:00.000Z",
+      fetchedCount: 3,
+      added: 1,
+      unchanged: 1,
+      removed: 1,
+      selectedIds: openRouterModels.map((model) => model.id),
+      targetAgents: ["main"],
+      syncedAgents: ["main"],
+      sessionSelectionResets: 3,
+      resetSessionKeys: [
+        "agent:main:browser",
+        "agent:main:cli",
+        "agent:worker:cli",
+      ],
+      models: openRouterModels,
+    }));
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(harness.container.querySelector('[data-ref="saveState"]')?.textContent).toContain(
+        "已回落 3 个会话到默认模型",
+      );
+    });
   });
 
   it("blocks saving and applying when either regex is invalid", async () => {

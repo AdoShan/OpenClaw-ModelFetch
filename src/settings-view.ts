@@ -17,6 +17,21 @@ type ModelRow = ModelView & {
   remote: boolean;
 };
 
+export type AffectedSession = {
+  sessionKey: string;
+  agentId: string;
+  label: string;
+};
+
+type ApplyPlanWithSessions = ApplyPlan & {
+  affectedSessions?: AffectedSession[];
+};
+
+type ApplyOutputWithSessions = ApplyStrategyOutput & {
+  sessionSelectionResets?: number;
+  resetSessionKeys?: string[];
+};
+
 type DraftState = {
   filter: ModelFilterConfig;
   targetAgents: string[];
@@ -184,6 +199,10 @@ const PAGE_MARKUP = `
         <p>请确认要移除的模型：</p>
         <div class="mf-delete-list" data-ref="deleteList"></div>
         <div class="mf-reference-note" data-ref="deleteRefs" hidden></div>
+        <div class="mf-reference-note" data-ref="sessionImpact" hidden>
+          <p data-ref="sessionImpactTitle"></p>
+          <div data-ref="sessionImpactList"></div>
+        </div>
       </div>
       <div class="mf-dialog-actions">
         <button class="mf-button" data-ref="cancelDelete" type="button">取消</button>
@@ -373,6 +392,9 @@ export function mountModelFetchSettings(
     deleteDescription: page.querySelector<HTMLElement>('[data-ref="deleteDescription"]')!,
     deleteList: page.querySelector<HTMLElement>('[data-ref="deleteList"]')!,
     deleteRefs: page.querySelector<HTMLElement>('[data-ref="deleteRefs"]')!,
+    sessionImpact: page.querySelector<HTMLElement>('[data-ref="sessionImpact"]')!,
+    sessionImpactTitle: page.querySelector<HTMLElement>('[data-ref="sessionImpactTitle"]')!,
+    sessionImpactList: page.querySelector<HTMLElement>('[data-ref="sessionImpactList"]')!,
     cancelDelete: page.querySelector<HTMLButtonElement>('[data-ref="cancelDelete"]')!,
     confirmDelete: page.querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!,
   };
@@ -853,6 +875,28 @@ export function mountModelFetchSettings(
     }
   }
 
+  function renderAffectedSessions(entries: AffectedSession[]) {
+    refs.sessionImpactList.replaceChildren();
+    refs.sessionImpact.hidden = entries.length === 0;
+    refs.sessionImpactTitle.textContent = "";
+    if (entries.length === 0) return;
+
+    refs.sessionImpactTitle.textContent =
+      `受影响会话：应用后以下 ${entries.length} 个会话会回落到默认模型。`;
+    for (const entry of entries) {
+      const row = document.createElement("div");
+      row.className = "mf-reference-item";
+      const label = document.createElement("span");
+      const readable = entry.label.trim();
+      label.textContent =
+        readable.length > 0 ? readable : entry.agentId.trim() || entry.sessionKey;
+      const key = document.createElement("code");
+      key.textContent = entry.sessionKey;
+      row.append(label, key);
+      refs.sessionImpactList.append(row);
+    }
+  }
+
   async function applyPlan(provider: ProviderSummary, plan: ApplyPlan) {
     if (applying) return;
     const draft = currentDraft();
@@ -861,7 +905,7 @@ export function mountModelFetchSettings(
     error = "";
     render();
     try {
-      const output: ApplyStrategyOutput & { protectedModels?: ProtectedModel[] } =
+      const output: ApplyOutputWithSessions & { protectedModels?: ProtectedModel[] } =
         await feature.invoke("strategy.apply", {
           provider: provider.id,
           fingerprint: plan.fingerprint,
@@ -888,8 +932,9 @@ export function mountModelFetchSettings(
         protectedModels.length > 0
           ? `；引用保护保留 ${protectedModels.length} 个模型`
           : "";
+      const resetCount = output.sessionSelectionResets ?? output.resetSessionKeys?.length ?? 0;
       const sessionSuffix =
-        output.sessionSelectionReset ? "；当前会话已回落到默认模型" : "";
+        resetCount > 0 ? `；已回落 ${resetCount} 个会话到默认模型` : "";
       setNotice(
         `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}${protectedSuffix}${sessionSuffix}`,
       );
@@ -934,7 +979,12 @@ export function mountModelFetchSettings(
       });
       pendingPlan = output.plan;
       const protectedModels = output.plan.protectedModels ?? [];
+      const affectedSessions =
+        (output.plan as ApplyPlanWithSessions).affectedSessions ??
+        (output as { affectedSessions?: AffectedSession[] }).affectedSessions ??
+        [];
       protections.set(provider.id, protectedModels);
+      renderAffectedSessions(affectedSessions);
       previewing = false;
       render();
 
