@@ -32,6 +32,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Reject third-party commit attribution
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            RANGE="$(git rev-list --max-count=1 "$HEAD_SHA")"
+          else
+            RANGE="$BASE_SHA..$HEAD_SHA"
+          fi
+          if git log --format=%B "$RANGE" | grep -Eiq 'co-authored-by:[[:space:]]*claude|generated with[[:space:]]+claude'; then
+            echo "::error::Commit messages must not contain Claude attribution."
+            exit 1
+          fi
+          echo "No forbidden commit attribution found."
+
       - name: Typecheck
         run: npm run typecheck
 

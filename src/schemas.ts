@@ -293,6 +293,7 @@ export const applyStrategyOutputSchema = Type.Object(
       maxItems: 256,
       uniqueItems: true,
     }),
+    sessionSelectionReset: Type.Boolean(),
     models: Type.Array(modelViewSchema, { maxItems: 2_000 }),
   },
   { additionalProperties: false },

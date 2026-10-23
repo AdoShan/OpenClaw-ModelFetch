@@ -1,0 +1,121 @@
+name: Bug report
+description: Report a reproducible problem with Model Fetch.
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill in every required field. Remove API keys, tokens, cookies, and authorization headers before attaching logs or configuration.
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem description
+      description: What happened, and why is it wrong?
+      placeholder: The apply confirmation succeeds, but the new model does not appear in the WebUI model picker.
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: 0.2.2
+    validations:
+      required: true
+  - type: input
+    id: openclaw-version
+    attributes:
+      label: OpenClaw version
+      placeholder: 2026.10.5
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      placeholder: 24.16.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation method
+      options:
+        - npm release
+        - Local repository
+        - Linked local repository
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: provider-id
+    attributes:
+      label: Provider ID
+      description: Use the configured provider ID, not the provider secret or account name.
+      placeholder: magpie
+    validations:
+      required: true
+  - type: textarea
+    id: model-ids
+    attributes:
+      label: Affected model IDs
+      description: One model ID per line.
+      placeholder: |
+        group/deepseek-v4.1-flash
+        MiniMax-M3.1-Flash
+    validations:
+      required: true
+  - type: textarea
+    id: filter
+    attributes:
+      label: Filter strategy
+      description: Include the exact includeRegex, excludeRegex, manualIds, replace value, and target agents.
+      placeholder: |
+        includeRegex: "^group/"
+        excludeRegex: ""
+        manualIds: []
+        replace: true
+        targetAgents: []
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Number the steps from opening Model Fetch to observing the problem.
+      placeholder: |
+        1. Fetch remote models.
+        2. Save the strategy.
+        3. Apply strategy to config.
+        4. Open the Models page.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Attach screenshots or redacted console/network output. Keep secrets out of the evidence.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I reproduced the issue with the latest released version or latest main.
+          required: true
+        - label: I searched existing issues and found no duplicate report.
+          required: true
+        - label: I removed API keys, tokens, cookies, and authorization headers from this report.
+          required: true

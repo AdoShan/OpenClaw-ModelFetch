@@ -5,6 +5,11 @@ import type {
   PluginJsonValue,
   PluginSessionActionContext,
 } from "openclaw/plugin-sdk/core";
+import {
+  getSessionEntryAsync,
+  patchSessionEntry,
+  type SessionEntry,
+} from "openclaw/plugin-sdk/session-store-runtime";
 import { modelFetchContract } from "./contract.js";
 import {
   applyModelReferenceProtection,
@@ -75,6 +80,16 @@ type ComputedPlan = {
   models: ModelView[];
   fingerprint: string;
   finalModels: ModelDefinitionLike[];
+};
+
+type SessionSelectionScope = {
+  sessionKey?: string;
+  agentId?: string;
+};
+
+type SessionStoreRuntime = {
+  getSessionEntryAsync: typeof getSessionEntryAsync;
+  patchSessionEntry: typeof patchSessionEntry;
 };
 
 export type ModelFetchOperations = ReturnType<typeof createModelFetchOperations>;
@@ -164,6 +179,69 @@ function sameStringSets(left: readonly string[], right: readonly string[]): bool
   );
 }
 
+function staleOverrideMatches(
+  entry: SessionEntry,
+  providerId: string,
+  removedIds: readonly string[],
+): boolean {
+  if (entry.providerOverride) {
+    return entry.providerOverride === providerId && removedIds.includes(entry.modelOverride ?? "");
+  }
+  if (entry.modelOverride) {
+    return removedIds.some((modelId) => entry.modelOverride === `${providerId}/${modelId}`);
+  }
+  return entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
+}
+
+async function resetStaleSessionSelection({
+  scope,
+  providerId,
+  removedIds,
+  sessionStore,
+}: {
+  scope: SessionSelectionScope;
+  providerId: string;
+  removedIds: readonly string[];
+  sessionStore: SessionStoreRuntime;
+}): Promise<boolean> {
+  const sessionKey = scope.sessionKey?.trim();
+  if (!sessionKey || removedIds.length === 0) return false;
+
+  const entry = await sessionStore.getSessionEntryAsync({
+    sessionKey,
+    agentId: scope.agentId,
+  });
+  if (!entry || entry.modelSelectionLocked === true) return false;
+  if (!staleOverrideMatches(entry, providerId, removedIds)) return false;
+
+  const runtimeModelMatches =
+    entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
+  const updated = await sessionStore.patchSessionEntry({
+    sessionKey,
+    agentId: scope.agentId,
+    preserveActivity: true,
+    update: () => ({
+      providerOverride: undefined,
+      modelOverride: undefined,
+      modelOverrideSource: undefined,
+      modelOverrideRouteResolution: undefined,
+      modelOverrideFallbackOriginProvider: undefined,
+      modelOverrideFallbackOriginModel: undefined,
+      ...(runtimeModelMatches
+        ? {
+            model: undefined,
+            modelProvider: undefined,
+            contextTokens: undefined,
+            contextTokensSource: undefined,
+            contextBudgetStatus: undefined,
+          }
+        : {}),
+    }),
+  });
+
+  return Boolean(updated);
+}
+
 function ensurePluginEntry(
   draft: MutableConfig,
   providerId: string,
@@ -194,11 +272,13 @@ export function createModelFetchOperations({
   factoryConfig,
   fetchModels = fetchProviderModels,
   now = () => new Date(),
+  sessionStore = { getSessionEntryAsync, patchSessionEntry },
 }: {
   api: OpenClawPluginApi;
   factoryConfig?: ModelFetchConfig;
   fetchModels?: typeof fetchProviderModels;
   now?: () => Date;
+  sessionStore?: SessionStoreRuntime;
 }) {
   const runtime = api.runtime;
 
@@ -414,12 +494,15 @@ export function createModelFetchOperations({
     };
   }
 
-  async function applyStrategy({
-    provider,
-    fingerprint,
-    expectedRemovals,
-    targetAgents,
-  }: ApplyStrategyInput): Promise<ApplyStrategyOutput> {
+  async function applyStrategy(
+    {
+      provider,
+      fingerprint,
+      expectedRemovals,
+      targetAgents,
+    }: ApplyStrategyInput,
+    scope: SessionSelectionScope = {},
+  ): Promise<ApplyStrategyOutput> {
     const computed = await computePlan(provider);
     if (computed.fingerprint !== fingerprint) {
       throw new Error("模型列表或筛选策略已变化，请重新预览后再确认应用。");
@@ -464,6 +547,16 @@ export function createModelFetchOperations({
       },
     });
 
+    let sessionSelectionReset = false;
+    if (scope.sessionKey) {
+      sessionSelectionReset = await resetStaleSessionSelection({
+        scope,
+        providerId: provider,
+        removedIds: computed.removedIds,
+        sessionStore,
+      });
+    }
+
     return {
       provider,
       persisted: true,
@@ -477,6 +570,7 @@ export function createModelFetchOperations({
       protectedModels: computed.protectedModels,
       targetAgents: nextTargetAgents,
       syncedAgents,
+      sessionSelectionReset,
       models: computed.models,
     };
   }
@@ -509,15 +603,21 @@ export function registerModelFetchOperations(
   } = {},
 ): ModelFetchOperations {
   const operations = createModelFetchOperations({ api, ...options });
-  const handlers: Record<string, (input: unknown) => Promise<unknown>> = {
+  const handlers: Record<
+    string,
+    (input: unknown, context: PluginSessionActionContext) => Promise<unknown>
+  > = {
     "providers.list": () => operations.listProviders(),
     "models.fetch": (input) =>
       operations.fetchModels((input as { provider: string }).provider),
     "strategy.save": (input) => operations.saveStrategy(input as SaveStrategyInput),
     "strategy.preview": (input) =>
       operations.previewApply((input as { provider: string }).provider),
-    "strategy.apply": (input) =>
-      operations.applyStrategy(input as ApplyStrategyInput),
+    "strategy.apply": (input, context) =>
+      operations.applyStrategy(input as ApplyStrategyInput, {
+        sessionKey: context.sessionKey,
+        agentId: context.agentId,
+      }),
     "provider.refresh": (input) =>
       operations.refreshProvider(input as ModelFetchParams),
   };
@@ -548,7 +648,7 @@ export function registerModelFetchOperations(
           }
           return {
             ok: true,
-            result: (await handler(payload)) as PluginJsonValue,
+            result: (await handler(payload, context)) as PluginJsonValue,
           };
         } catch (error) {
           return {

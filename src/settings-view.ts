@@ -867,6 +867,8 @@ export function mountModelFetchSettings(
           fingerprint: plan.fingerprint,
           expectedRemovals: plan.removedIds,
           targetAgents: draft.targetAgents,
+        }, {
+          sessionKey: context.host.sessions.selectedKey || undefined,
         });
       if (disposed || context.signal.aborted) return;
       remotes.set(provider.id, {
@@ -886,8 +888,10 @@ export function mountModelFetchSettings(
         protectedModels.length > 0
           ? `；引用保护保留 ${protectedModels.length} 个模型`
           : "";
+      const sessionSuffix =
+        output.sessionSelectionReset ? "；当前会话已回落到默认模型" : "";
       setNotice(
-        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}${protectedSuffix}`,
+        `已将 ${output.selectedIds.length} 个模型写入 ${provider.label}，新增 ${output.added}，删除 ${output.removed}${syncedSuffix}${protectedSuffix}${sessionSuffix}`,
       );
       pendingPlan = null;
       if (typeof refs.deleteDialog.close === "function" && refs.deleteDialog.open) {

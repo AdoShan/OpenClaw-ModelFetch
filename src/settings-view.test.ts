@@ -86,7 +86,7 @@ function createHarness() {
   const container = document.createElement("div");
   document.body.append(container);
   const controller = new window.AbortController();
-  const requests: { actionId: string; payload: unknown }[] = [];
+  const requests: { actionId: string; payload: unknown; sessionKey?: string }[] = [];
   const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
   handlers.set("providers.list", async () => providersOutput());
   handlers.set("models.fetch", async (payload) => {
@@ -134,7 +134,12 @@ function createHarness() {
     request: async (method: string, params?: Record<string, unknown>) => {
       expect(method).toBe("plugins.sessionAction");
       const actionId = String(params?.actionId);
-      requests.push({ actionId, payload: params?.payload });
+      requests.push({
+        actionId,
+        payload: params?.payload,
+        sessionKey:
+          typeof params?.sessionKey === "string" ? params.sessionKey : undefined,
+      });
       const handler = handlers.get(actionId);
       if (!handler) return { ok: false, error: `missing ${actionId}` };
       try {
@@ -148,7 +153,7 @@ function createHarness() {
     },
     onEvent: () => () => undefined,
     subscribe: () => () => undefined,
-    sessions: {},
+    sessions: { selectedKey: "agent:main:browser" },
     agents: {},
     navigation: {},
     ui: {},
@@ -422,6 +427,7 @@ describe("Model Fetch settings view", () => {
         expectedRemovals: ["stale/model"],
         targetAgents: ["main"],
       });
+      expect(apply?.sessionKey).toBe("agent:main:browser");
     });
   });
 

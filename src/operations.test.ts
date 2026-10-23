@@ -309,6 +309,177 @@ describe("Control UI operations", () => {
     ]);
   });
 
+  it("resets the current session selection when its model is removed", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api, getConfig } = createApi(
+      baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        {
+          openrouter: {
+            filter: { includeRegex: "^openai/" },
+          },
+        },
+      ),
+    );
+    const fetchModels = vi.fn(async () => [kept]);
+    const getSessionEntryAsync = vi.fn(async () => ({
+      providerOverride: "openrouter",
+      modelOverride: "stale/model",
+      modelProvider: "openrouter",
+      model: "stale/model",
+      modelSelectionLocked: false,
+    }));
+    const patchSessionEntry = vi.fn(async () => ({
+      providerOverride: undefined,
+      modelOverride: undefined,
+    }));
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels,
+      sessionStore: { getSessionEntryAsync, patchSessionEntry },
+    });
+    const preview = await operations.previewApply("openrouter");
+
+    const applied = await operations.applyStrategy(
+      {
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: ["stale/model"],
+      },
+      { sessionKey: "agent:main:dashboard:test", agentId: "main" },
+    );
+
+    expect(applied.sessionSelectionReset).toBe(true);
+    expect(getSessionEntryAsync).toHaveBeenCalledWith({
+      sessionKey: "agent:main:dashboard:test",
+      agentId: "main",
+    });
+    expect(patchSessionEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:main:dashboard:test",
+        agentId: "main",
+        preserveActivity: true,
+      }),
+    );
+    const patch = patchSessionEntry.mock.calls[0][0] as {
+      update: () => Record<string, unknown>;
+    };
+    expect(patch.update()).toEqual({
+      providerOverride: undefined,
+      modelOverride: undefined,
+      modelOverrideSource: undefined,
+      modelOverrideRouteResolution: undefined,
+      modelOverrideFallbackOriginProvider: undefined,
+      modelOverrideFallbackOriginModel: undefined,
+      model: undefined,
+      modelProvider: undefined,
+      contextTokens: undefined,
+      contextTokensSource: undefined,
+      contextBudgetStatus: undefined,
+    });
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+    ]);
+  });
+
+  it("resets a session that persisted only the runtime model", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api } = createApi(
+      baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        { openrouter: { filter: { includeRegex: "^openai/" } } },
+      ),
+    );
+    const getSessionEntryAsync = vi.fn(async () => ({
+      modelProvider: "openrouter",
+      model: "stale/model",
+      modelSelectionLocked: false,
+    }));
+    const patchSessionEntry = vi.fn(async () => ({}));
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [kept]),
+      sessionStore: { getSessionEntryAsync, patchSessionEntry },
+    });
+    const preview = await operations.previewApply("openrouter");
+
+    const applied = await operations.applyStrategy(
+      {
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: ["stale/model"],
+      },
+      { sessionKey: "agent:main:runtime-only", agentId: "main" },
+    );
+
+    expect(applied.sessionSelectionReset).toBe(true);
+    const patch = patchSessionEntry.mock.calls[0][0] as {
+      update: () => Record<string, unknown>;
+    };
+    expect(patch.update()).toMatchObject({
+      model: undefined,
+      modelProvider: undefined,
+      contextTokens: undefined,
+      contextTokensSource: undefined,
+      contextBudgetStatus: undefined,
+    });
+  });
+
+  it("leaves locked sessions untouched", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const { api } = createApi(
+      baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        { openrouter: { filter: { includeRegex: "^openai/" } } },
+      ),
+    );
+    const getSessionEntryAsync = vi.fn(async () => ({
+      providerOverride: "openrouter",
+      modelOverride: "stale/model",
+      modelSelectionLocked: true,
+    }));
+    const patchSessionEntry = vi.fn(async () => ({}));
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [kept]),
+      sessionStore: { getSessionEntryAsync, patchSessionEntry },
+    });
+    const preview = await operations.previewApply("openrouter");
+
+    const applied = await operations.applyStrategy(
+      {
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: ["stale/model"],
+      },
+      { sessionKey: "agent:main:locked", agentId: "main" },
+    );
+
+    expect(applied.sessionSelectionReset).toBe(false);
+    expect(patchSessionEntry).not.toHaveBeenCalled();
+  });
+
   it("adds applied models to modelPolicy.allow when allowlist is configured", async () => {
     const { api, getConfig } = createApi(
       {

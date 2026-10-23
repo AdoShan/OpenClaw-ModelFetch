@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a concrete improvement to Model Fetch.
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: Explain the real workflow you want to improve.
+      placeholder: I refresh 200 models but only a small provider-specific subset should be written.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed behavior
+      description: Describe the user-visible behavior, not an internal implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List the checks that must pass before the feature is complete.
+      placeholder: |
+        - The include regex supports case-insensitive matching.
+        - Saved strategies stay independent per provider.
+    validations:
+      required: true
+  - type: textarea
+    id: providers
+    attributes:
+      label: Affected providers
+      description: One configured provider ID per line, or "all providers".
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround
+      description: Explain what you do today without this feature.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Blocking my workflow
+        - Significant friction
+        - Nice to have
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, configuration shapes, or provider documentation links. Do not include secrets.
+    validations:
+      required: false
