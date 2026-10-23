@@ -29,25 +29,22 @@
 
 ## 安装
 
-在仓库目录构建并检查插件：
+普通使用者建议直接安装 npm 包。OpenClaw 会下载已发布的插件包，包内已经包含构建好的 `dist/`，不需要克隆本仓库，也不需要运行 `npm install` 或 `npm run plugin:build`：
 
 ```bash
-npm install
-npm run plugin:build
-npm run plugin:validate
+openclaw plugins install openclaw-plugin-model-fetch
 ```
 
-从当前目录安装：
+安装指定发布版本：
 
 ```bash
-openclaw plugins install /absolute/path/to/OpenClaw-ModelFetch
+openclaw plugins install openclaw-plugin-model-fetch@0.2.4
 ```
 
-本地开发时建议使用链接安装，修改后重新构建：
+OpenClaw 提示能力确认时，请检查并接受插件声明的 `model_fetch` 工具能力。后续升级 npm 安装：
 
 ```bash
-openclaw plugins install /absolute/path/to/OpenClaw-ModelFetch --link
-npm run plugin:build
+openclaw plugins update model-fetch
 ```
 
 可用以下命令检查插件状态：
@@ -57,17 +54,29 @@ openclaw plugins list
 openclaw plugins doctor
 ```
 
+源码安装适合插件开发。克隆仓库、安装依赖、构建并检查插件后，再以链接方式安装：
+
+```bash
+npm install
+npm run plugin:build
+npm run plugin:validate
+openclaw plugins install /absolute/path/to/OpenClaw-ModelFetch --link
+npm run plugin:build
+```
+
+源码修改后，需要再次运行 `npm run plugin:build`，链接安装才会读取新的构建产物。
+
 ## 开启设置界面
 
 自定义插件 UI 默认关闭。打开与 Gateway 同源的 Control UI 后，进入：
 
 **Settings → Labs → Custom plugin UI**
 
-开启后刷新浏览器页面，Control UI 侧边栏会出现 **Model Fetch**。如果使用已安装的本地插件但没有看到菜单，请依次确认：
+开启后刷新浏览器页面，Control UI 侧边栏会出现 **Model Fetch**。如果没有看到菜单，请依次确认：
 
 1. `openclaw plugins list` 中插件已启用且没有配置错误。
 2. Custom plugin UI 已开启。
-3. 已经运行 `npm run plugin:build`，并刷新 Control UI。
+3. npm 安装已是最新版本且已由 Gateway 加载；源码安装已经运行 `npm run plugin:build`。
 4. Control UI 与 Gateway 同源，且使用 HTTPS 或浏览器可信的 loopback 地址。
 
 等价的配置项是：
@@ -97,7 +106,7 @@ openclaw plugins doctor
    openclaw plugins doctor
    ```
 
-2. 确认已经重新构建并让 Gateway 读取到最新 `openclaw.plugin.json`：
+2. npm 安装如果被 `doctor` 判定为包损坏，请重新安装或更新；源码安装请重新构建，并确认 Gateway 已读取最新 `openclaw.plugin.json`：
 
    ```bash
    npm run plugin:build

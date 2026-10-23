@@ -29,25 +29,22 @@ Fetch a provider's remote model list inside the OpenClaw Control UI, apply a per
 
 ## Installation
 
-Build and validate the plugin from the repository root:
+Install the published npm package with OpenClaw. This is the recommended path for users; OpenClaw downloads the package, which already contains the built plugin under `dist/`. You do not need to clone this repository or run `npm install` and `npm run plugin:build`:
 
 ```bash
-npm install
-npm run plugin:build
-npm run plugin:validate
+openclaw plugins install openclaw-plugin-model-fetch
 ```
 
-Install from this checkout:
+To install a specific released version:
 
 ```bash
-openclaw plugins install /absolute/path/to/OpenClaw-ModelFetch
+openclaw plugins install openclaw-plugin-model-fetch@0.2.4
 ```
 
-For local development, link the checkout instead of copying it, then rebuild after changes:
+When OpenClaw asks, review and accept the declared `model_fetch` tool capability. To upgrade an npm installation later:
 
 ```bash
-openclaw plugins install /absolute/path/to/OpenClaw-ModelFetch --link
-npm run plugin:build
+openclaw plugins update model-fetch
 ```
 
 Check plugin status with:
@@ -57,17 +54,29 @@ openclaw plugins list
 openclaw plugins doctor
 ```
 
+Source installations are for plugin development. Clone this repository, install dependencies, build and validate, then link the checkout:
+
+```bash
+npm install
+npm run plugin:build
+npm run plugin:validate
+openclaw plugins install /absolute/path/to/OpenClaw-ModelFetch --link
+npm run plugin:build
+```
+
+After source changes, run `npm run plugin:build` again so the linked installation picks up the rebuilt bundle.
+
 ## Enabling the settings UI
 
 Custom plugin UIs are disabled by default. Open the Control UI served from the same origin as the Gateway, then go to:
 
 **Settings → Labs → Custom plugin UI**
 
-Enable it and reload the browser page. **Model Fetch** then appears in the Control UI sidebar. If you installed a local plugin but the entry is missing, check in order:
+Enable it and reload the browser page. **Model Fetch** then appears in the Control UI sidebar. If the entry is missing, check in order:
 
 1. `openclaw plugins list` shows the plugin enabled with no configuration errors.
 2. Custom plugin UI is enabled.
-3. `npm run plugin:build` has been run and the Control UI reloaded.
+3. An npm installation is current and was loaded by the Gateway; a source installation has been rebuilt with `npm run plugin:build`.
 4. The Control UI shares the Gateway origin and is served over HTTPS or a browser-trusted loopback address.
 
 The equivalent config entry is:
@@ -97,7 +106,7 @@ Work through these in order:
    openclaw plugins doctor
    ```
 
-2. Confirm you rebuilt and the Gateway picked up the latest `openclaw.plugin.json`:
+2. For an npm installation, reinstall or update the plugin if `doctor` reports a broken package. For a source installation, rebuild and make sure the Gateway picked up the latest `openclaw.plugin.json`:
 
    ```bash
    npm run plugin:build
