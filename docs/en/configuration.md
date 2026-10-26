@@ -91,9 +91,10 @@ Existing model definitions retain fields such as name, cost, reasoning support, 
 
 Replacement mode does not delete a model that is still referenced by a non-Agent model consumer. Examples include:
 
-- Agent utility, decision, image, media, voice, PDF, and embedded-Agent failover models.
-- Hook defaults such as `hooks.gmail.model`.
-- Hook mapping models such as `hooks.mappings[].model`.
+- Agent primary, utility, decision, image, media, voice, PDF, heartbeat, subagents, compaction, memory-flush, and embedded-Agent failover models.
+- Agent entry exec reviewer and `tts.summaryModel` references, plus root `tts.summaryModel`.
+- Tools exec reviewer and media preferred-model references.
+- Hook, `channels.modelByChannel`, and Discord voice model references.
 
 The deletion dialog lists the protected models and the exact configuration paths that kept each one.
 

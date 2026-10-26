@@ -155,6 +155,7 @@ describe("model reference protection", () => {
   const referenceConfig = {
     agents: {
       defaults: {
+        model: "openrouter/default-model",
         utilityModel: "openrouter/utility-model",
         decisionModel: "openrouter/decision-model",
         imageModel: {
@@ -168,11 +169,19 @@ describe("model reference protection", () => {
         voiceModel: { primary: "openrouter/voice-model" },
         pdfModel: "openrouter/pdf-model",
         embeddedAgent: { cyberFailover: { model: "openrouter/cyber-model" } },
+        heartbeat: { model: { primary: "openrouter/heartbeat-model", fallbacks: [] } },
+        subagents: { model: "openrouter/subagents-model" },
+        compaction: {
+          model: "openrouter/compaction-model",
+          memoryFlush: { model: "openrouter/compaction-flush" },
+        },
       },
       entries: {
         main: {
           utilityModel: "openrouter/utility-model",
           decisionModel: "openrouter/entry-decision",
+          tools: { exec: { reviewer: { model: "openrouter/entry-reviewer" } } },
+          tts: { summaryModel: "openrouter/entry-tts-summary" },
         },
         blank: {},
       },
@@ -180,6 +189,25 @@ describe("model reference protection", () => {
     hooks: {
       gmail: { model: "openrouter/gmail-model" },
       mappings: [{ match: { path: "/inbox" }, model: "openrouter/hook-model" }, null, {}],
+    },
+    tools: {
+      exec: { reviewer: { model: { primary: "openrouter/media-reviewer", fallbacks: [] } } },
+      media: {
+        audio: { preferredModel: "openrouter/tools-audio" },
+        video: { preferredModel: "openrouter/tools-video" },
+      },
+    },
+    tts: { summaryModel: "openrouter/root-tts-summary" },
+    channels: {
+      modelByChannel: {
+        telegram: { main: "openrouter/channel-model" },
+      },
+      discord: {
+        voice: { model: "openrouter/discord-voice-model" },
+        accounts: {
+          bot: { voice: { tts: { summaryModel: "openrouter/discord-account-tts" } } },
+        },
+      },
     },
   };
 
@@ -189,6 +217,20 @@ describe("model reference protection", () => {
       "decision-model",
       "image-model",
       "image-fallback",
+      "default-model",
+      "heartbeat-model",
+      "subagents-model",
+      "compaction-model",
+      "compaction-flush",
+      "entry-reviewer",
+      "entry-tts-summary",
+      "media-reviewer",
+      "tools-audio",
+      "tools-video",
+      "root-tts-summary",
+      "channel-model",
+      "discord-voice-model",
+      "discord-account-tts",
       "video-model",
       "music-model",
       "voice-model",
@@ -201,18 +243,71 @@ describe("model reference protection", () => {
     ]);
 
     expect(usages.map((usage) => usage.modelId)).toEqual([
+      "channel-model",
+      "compaction-flush",
+      "compaction-model",
       "cyber-model",
       "decision-model",
+      "default-model",
+      "discord-account-tts",
+      "discord-voice-model",
       "entry-decision",
+      "entry-reviewer",
+      "entry-tts-summary",
       "gmail-model",
+      "heartbeat-model",
       "hook-model",
       "image-fallback",
       "image-model",
+      "media-reviewer",
       "music-model",
       "pdf-model",
+      "root-tts-summary",
+      "subagents-model",
+      "tools-audio",
+      "tools-video",
       "utility-model",
       "video-model",
       "voice-model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "default-model")?.references).toEqual([
+      "agents.defaults.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "heartbeat-model")?.references).toEqual([
+      "agents.defaults.heartbeat.model.primary",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "subagents-model")?.references).toEqual([
+      "agents.defaults.subagents.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "compaction-model")?.references).toEqual([
+      "agents.defaults.compaction.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "compaction-flush")?.references).toEqual([
+      "agents.defaults.compaction.memoryFlush.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "entry-reviewer")?.references).toEqual([
+      "agents.entries.main.tools.exec.reviewer.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "entry-tts-summary")?.references).toEqual([
+      "agents.entries.main.tts.summaryModel",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "media-reviewer")?.references).toEqual([
+      "tools.exec.reviewer.model.primary",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "tools-audio")?.references).toEqual([
+      "tools.media.audio.preferredModel",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "root-tts-summary")?.references).toEqual([
+      "tts.summaryModel",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "channel-model")?.references).toEqual([
+      "channels.modelByChannel.telegram.main",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "discord-voice-model")?.references).toEqual([
+      "channels.discord.voice.model",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "discord-account-tts")?.references).toEqual([
+      "channels.discord.accounts.bot.voice.tts.summaryModel",
     ]);
     expect(usages.find((usage) => usage.modelId === "utility-model")).toEqual({
       modelId: "utility-model",
@@ -245,7 +340,7 @@ describe("model reference protection", () => {
     ]);
   });
 
-  it("ignores allowlists, other providers, and wildcard rules", () => {
+  it("keeps explicit primary models but ignores allowlists and agent model maps", () => {
     const usages = collectModelReferenceUsages(
       {
         agents: {
@@ -265,7 +360,28 @@ describe("model reference protection", () => {
       "openrouter",
       ["allowlisted", "entry-model", "default-model", "utility-model"],
     );
-    expect(usages).toEqual([]);
+    expect(usages).toEqual([
+      {
+        modelId: "default-model",
+        ref: "openrouter/default-model",
+        references: ["agents.defaults.model"],
+      },
+    ]);
+  });
+
+  it("scans legacy agent list entries", () => {
+    const usages = collectModelReferenceUsages(
+      { agents: { list: [{ model: "openrouter/list-model" }] } },
+      "openrouter",
+      ["list-model"],
+    );
+    expect(usages).toEqual([
+      {
+        modelId: "list-model",
+        ref: "openrouter/list-model",
+        references: ["agents.list[0].model"],
+      },
+    ]);
   });
 
   it("keeps referenced models in the replacement list and reports their paths", () => {

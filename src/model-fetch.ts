@@ -479,6 +479,10 @@ export function mergeModels({
 
 type ModelReferenceVisitor = (ref: string, path: string) => void;
 
+function asOptionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
 function readModelRefScalar(value: unknown, path: string, visit: ModelReferenceVisitor): void {
   if (typeof value !== "string") return;
   const ref = value.trim();
@@ -501,45 +505,52 @@ function readModelRefSetting(value: unknown, path: string, visit: ModelReference
 
 /**
  * Walks the explicit model references that live outside the agent allowlist and
- * agent `models` sync: utility/decision models, media, voice, pdf, embedded agent
- * cyber failover, and hook models. Deleting a model named here would leave a
- * dangling `provider/model` reference behind.
+ * agent `models` sync. Those two collections are reconciled separately by the
+ * apply operation; deleting a model named here would leave a dangling
+ * `provider/model` reference behind.
  */
 function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVisitor): void {
   if (!isRecord(config)) return;
 
-  const agents = isRecord(config.agents) ? config.agents : undefined;
-  const defaults = agents && isRecord(agents.defaults) ? agents.defaults : undefined;
-  if (defaults) {
-    readModelRefScalar(defaults.utilityModel, "agents.defaults.utilityModel", visit);
-    readModelRefScalar(defaults.decisionModel, "agents.defaults.decisionModel", visit);
-    readModelRefSetting(defaults.imageModel, "agents.defaults.imageModel", visit);
-    readModelRefSetting(defaults.voiceModel, "agents.defaults.voiceModel", visit);
-    readModelRefSetting(defaults.pdfModel, "agents.defaults.pdfModel", visit);
-    if (isRecord(defaults.mediaModels)) {
-      readModelRefSetting(defaults.mediaModels.image, "agents.defaults.mediaModels.image", visit);
-      readModelRefSetting(defaults.mediaModels.video, "agents.defaults.mediaModels.video", visit);
-      readModelRefSetting(defaults.mediaModels.music, "agents.defaults.mediaModels.music", visit);
-    }
-    const embeddedAgent = isRecord(defaults.embeddedAgent) ? defaults.embeddedAgent : undefined;
-    if (embeddedAgent && isRecord(embeddedAgent.cyberFailover)) {
-      readModelRefScalar(
-        embeddedAgent.cyberFailover.model,
-        "agents.defaults.embeddedAgent.cyberFailover.model",
-        visit,
-      );
+  const tools = isRecord(config.tools) ? config.tools : undefined;
+  if (tools) {
+    const exec = asOptionalRecord(tools.exec);
+    const reviewer = asOptionalRecord(exec?.reviewer);
+    readModelRefSetting(reviewer?.model, "tools.exec.reviewer.model", visit);
+
+    if (isRecord(tools.media)) {
+      for (const capability of ["image", "audio", "video"] as const) {
+        readModelRefScalar(
+          asOptionalRecord(tools.media[capability])?.preferredModel,
+          `tools.media.${capability}.preferredModel`,
+          visit,
+        );
+      }
     }
   }
 
-  const entries = agents && isRecord(agents.entries) ? agents.entries : undefined;
-  if (entries) {
-    for (const agentId of Object.keys(entries).sort((left, right) => left.localeCompare(right))) {
-      if (agentId.includes(".")) continue;
-      const entry = entries[agentId];
-      if (!isRecord(entry)) continue;
-      readModelRefScalar(entry.utilityModel, `agents.entries.${agentId}.utilityModel`, visit);
-      readModelRefScalar(entry.decisionModel, `agents.entries.${agentId}.decisionModel`, visit);
+  const agents = isRecord(config.agents) ? config.agents : undefined;
+  const defaults = asOptionalRecord(agents?.defaults);
+  if (defaults) visitAgentModelReferences("agents.defaults", defaults, false, visit);
+
+  if (agents && isRecord(agents.entries)) {
+    for (const agentId of Object.keys(agents.entries).sort((left, right) => left.localeCompare(right))) {
+      const entry = agents.entries[agentId];
+      if (isRecord(entry)) {
+        visitAgentModelReferences(`agents.entries.${agentId}`, entry, true, visit);
+      }
     }
+  } else if (agents && Array.isArray(agents.list)) {
+    agents.list.forEach((entry, index) => {
+      if (isRecord(entry)) {
+        visitAgentModelReferences(`agents.list[${index}]`, entry, true, visit);
+      }
+    });
+  }
+
+  const tts = asOptionalRecord(config.tts);
+  if (tts) {
+    readModelRefSetting(tts.summaryModel, "tts.summaryModel", visit);
   }
 
   const hooks = isRecord(config.hooks) ? config.hooks : undefined;
@@ -554,6 +565,97 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
       });
     }
   }
+
+  const channels = isRecord(config.channels) ? config.channels : undefined;
+  if (channels) {
+    const modelByChannel = isRecord(channels.modelByChannel) ? channels.modelByChannel : undefined;
+    if (modelByChannel) {
+      for (const channelId of Object.keys(modelByChannel).sort((left, right) => left.localeCompare(right))) {
+        const channelMap = modelByChannel[channelId];
+        if (!isRecord(channelMap)) continue;
+        for (const targetId of Object.keys(channelMap).sort((left, right) => left.localeCompare(right))) {
+          readModelRefSetting(
+            channelMap[targetId],
+            `channels.modelByChannel.${channelId}.${targetId}`,
+            visit,
+          );
+        }
+      }
+    }
+
+    const discord = isRecord(channels.discord) ? channels.discord : undefined;
+    if (discord) {
+      visitDiscordVoiceModelReferences("channels.discord.voice", discord.voice, visit);
+      if (isRecord(discord.accounts)) {
+        for (const accountId of Object.keys(discord.accounts).sort((left, right) => left.localeCompare(right))) {
+          visitDiscordVoiceModelReferences(
+            `channels.discord.accounts.${accountId}.voice`,
+            asOptionalRecord(discord.accounts[accountId])?.voice,
+            visit,
+          );
+        }
+      }
+    }
+  }
+}
+
+function visitAgentModelReferences(
+  path: string,
+  agent: Record<string, unknown>,
+  includeEntrySelectors: boolean,
+  visit: ModelReferenceVisitor,
+): void {
+  readModelRefSetting(agent.model, `${path}.model`, visit);
+  readModelRefScalar(agent.utilityModel, `${path}.utilityModel`, visit);
+  readModelRefScalar(agent.decisionModel, `${path}.decisionModel`, visit);
+  readModelRefSetting(agent.imageModel, `${path}.imageModel`, visit);
+  readModelRefSetting(agent.voiceModel, `${path}.voiceModel`, visit);
+  readModelRefSetting(agent.pdfModel, `${path}.pdfModel`, visit);
+
+  const mediaModels = asOptionalRecord(agent.mediaModels);
+  if (mediaModels) {
+    for (const capability of ["image", "video", "music"] as const) {
+      readModelRefSetting(mediaModels[capability], `${path}.mediaModels.${capability}`, visit);
+    }
+  }
+
+  const cyberFailover = asOptionalRecord(asOptionalRecord(agent.embeddedAgent)?.cyberFailover);
+  if (cyberFailover) {
+    readModelRefSetting(cyberFailover.model, `${path}.embeddedAgent.cyberFailover.model`, visit);
+  }
+
+  readModelRefSetting(asOptionalRecord(agent.heartbeat)?.model, `${path}.heartbeat.model`, visit);
+  readModelRefSetting(asOptionalRecord(agent.subagents)?.model, `${path}.subagents.model`, visit);
+
+  const compaction = asOptionalRecord(agent.compaction);
+  if (compaction) {
+    readModelRefSetting(compaction.model, `${path}.compaction.model`, visit);
+    readModelRefSetting(
+      asOptionalRecord(compaction.memoryFlush)?.model,
+      `${path}.compaction.memoryFlush.model`,
+      visit,
+    );
+  }
+
+  if (!includeEntrySelectors) return;
+  const exec = asOptionalRecord(asOptionalRecord(agent.tools)?.exec);
+  readModelRefSetting(asOptionalRecord(exec?.reviewer)?.model, `${path}.tools.exec.reviewer.model`, visit);
+  readModelRefSetting(asOptionalRecord(agent.tts)?.summaryModel, `${path}.tts.summaryModel`, visit);
+}
+
+function visitDiscordVoiceModelReferences(
+  path: string,
+  voice: unknown,
+  visit: ModelReferenceVisitor,
+): void {
+  const voiceConfig = asOptionalRecord(voice);
+  if (!voiceConfig) return;
+  readModelRefSetting(voiceConfig.model, `${path}.model`, visit);
+  readModelRefSetting(
+    asOptionalRecord(voiceConfig.tts)?.summaryModel,
+    `${path}.tts.summaryModel`,
+    visit,
+  );
 }
 
 /**

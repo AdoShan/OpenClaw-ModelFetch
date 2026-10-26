@@ -91,30 +91,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.4
+            # Model Fetch v0.2.5
 
-            Applying a provider strategy now clears stale model selections across every configured agent and session, while the release pipeline publishes npm and GitHub Releases from the same immutable tag.
+            Applying a provider strategy now keeps models that are still referenced by additional OpenClaw model consumers, preventing dangling configuration references.
 
             ## Fixes
 
-            - **All affected sessions are reset together.** Model Fetch now scans sessions across all configured agents instead of only the current WebUI session. The confirmation dialog lists every session that will fall back to the default model, and the apply result reports how many sessions were reset.
-            - **Stale sessions are handled safely.** Locked sessions are always skipped, each session is rechecked immediately before it is patched, and one failed session does not stop the remaining cleanups.
-            - **Release publishing is single-track.** Real npm publishing is restricted to `vX.Y.Z` tag pushes, all releases share one concurrency queue, npm availability is checked with a fail-closed error policy, and GitHub Releases are created as drafts before npm publishing and published only after verification and publishing succeed.
+            - **Reference protection now covers OpenClaw's explicit model consumers.** Model Fetch protects primary, heartbeat, subagent, compaction, and memory-flush models, as well as media, PDF, utility, decision, image, and voice models.
+            - **Additional tool and channel references are protected.** Exec reviewer, tools media preferred models, root and Agent TTS summary models, `channels.modelByChannel`, and Discord voice references are retained when they point to a pending deletion.
+            - **Deletion plans remain auditable.** Confirmation and apply results continue to show the exact configuration path that kept each protected model.
 
             ## Compatibility
 
             - No configuration migration is required.
-            - The provider replacement behavior remains intentional: models that do not pass the saved filter are removed after confirmation.
+            - Replacement mode still removes unreferenced models that do not pass the saved filter after confirmation.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 70 tests passed.
+            - `npm test` — 73 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
-            - Manual WebUI verification confirmed affected sessions are listed before applying and reset after applying.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.3...v0.2.4
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.4...v0.2.5
           draft: true
           generate_release_notes: false
 
@@ -131,30 +130,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.4
+            # Model Fetch v0.2.5
 
-            Applying a provider strategy now clears stale model selections across every configured agent and session, while the release pipeline publishes npm and GitHub Releases from the same immutable tag.
+            Applying a provider strategy now keeps models that are still referenced by additional OpenClaw model consumers, preventing dangling configuration references.
 
             ## Fixes
 
-            - **All affected sessions are reset together.** Model Fetch now scans sessions across all configured agents instead of only the current WebUI session. The confirmation dialog lists every session that will fall back to the default model, and the apply result reports how many sessions were reset.
-            - **Stale sessions are handled safely.** Locked sessions are always skipped, each session is rechecked immediately before it is patched, and one failed session does not stop the remaining cleanups.
-            - **Release publishing is single-track.** Real npm publishing is restricted to `vX.Y.Z` tag pushes, all releases share one concurrency queue, npm availability is checked with a fail-closed error policy, and GitHub Releases are created as drafts before npm publishing and published only after verification and publishing succeed.
+            - **Reference protection now covers OpenClaw's explicit model consumers.** Model Fetch protects primary, heartbeat, subagent, compaction, and memory-flush models, as well as media, PDF, utility, decision, image, and voice models.
+            - **Additional tool and channel references are protected.** Exec reviewer, tools media preferred models, root and Agent TTS summary models, `channels.modelByChannel`, and Discord voice references are retained when they point to a pending deletion.
+            - **Deletion plans remain auditable.** Confirmation and apply results continue to show the exact configuration path that kept each protected model.
 
             ## Compatibility
 
             - No configuration migration is required.
-            - The provider replacement behavior remains intentional: models that do not pass the saved filter are removed after confirmation.
+            - Replacement mode still removes unreferenced models that do not pass the saved filter after confirmation.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 70 tests passed.
+            - `npm test` — 73 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
-            - Manual WebUI verification confirmed affected sessions are listed before applying and reset after applying.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.3...v0.2.4
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.4...v0.2.5
           generate_release_notes: false
           draft: false
           make_latest: true

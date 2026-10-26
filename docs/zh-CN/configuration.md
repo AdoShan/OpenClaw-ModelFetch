@@ -91,9 +91,10 @@ Ollama 不需要 API Key。使用本机或私有网络地址时，还需在 Prov
 
 替换模式不会删除仍被非 Agent 模型消费方引用的模型。例如：
 
-- Agent 的 utility、decision、image、media、voice、PDF 和嵌入式 Agent failover 模型。
-- `hooks.gmail.model` 等 Hook 默认模型。
-- `hooks.mappings[].model` 等 Hook 映射模型。
+- Agent 的 primary、utility、decision、image、media、voice、PDF、heartbeat、subagents、compaction、memory flush 和嵌入式 Agent failover 模型。
+- Agent 条目的 exec reviewer 和 `tts.summaryModel`，以及根级 `tts.summaryModel`。
+- Tools 的 exec reviewer 与 media preferred model。
+- Hook、`channels.modelByChannel` 和 Discord voice 中的模型引用。
 
 删除确认弹窗会列出受保护的模型，以及保留该模型的准确配置路径。
 
