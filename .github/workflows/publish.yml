@@ -91,29 +91,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.5
+            # Model Fetch v0.2.6
 
-            Applying a provider strategy now keeps models that are still referenced by additional OpenClaw model consumers, preventing dangling configuration references.
+            This release repairs the filter strategy editor, restores the sidebar pin entry, and makes Model Fetch visible in the OpenClaw Android and iOS apps.
 
             ## Fixes
 
-            - **Reference protection now covers OpenClaw's explicit model consumers.** Model Fetch protects primary, heartbeat, subagent, compaction, and memory-flush models, as well as media, PDF, utility, decision, image, and voice models.
-            - **Additional tool and channel references are protected.** Exec reviewer, tools media preferred models, root and Agent TTS summary models, `channels.modelByChannel`, and Discord voice references are retained when they point to a pending deletion.
-            - **Deletion plans remain auditable.** Confirmation and apply results continue to show the exact configuration path that kept each protected model.
+            - **Filter strategies can be saved again.** After the OpenClaw upgrade the regular expression fields only committed on blur, so the save button stayed disabled and clicking it could never commit the pending edit. The fields now update the strategy as you type, and the save button enables without needing to leave the field first.
+            - **Model Fetch is listed in the sidebar pin editor.** The navigation entry declares `defaultVisible: false` so OpenClaw offers it under "Edit pinned items" instead of hard-coding it into the sidebar, and a one-time migration restores the previous pinned state on the first activation after the upgrade.
+            - **Model Fetch is visible in the Android and iOS apps.** The plugin now registers a `surface: "tab"` control UI descriptor, so the Gateway advertises it in the `controlUiTabs` payload of the hello message that the mobile apps read.
 
             ## Compatibility
 
             - No configuration migration is required.
-            - Replacement mode still removes unreferenced models that do not pass the saved filter after confirmation.
+            - Hosts that do not support control UI descriptors are left untouched; the browser sidebar entry keeps working.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 73 tests passed.
+            - `npm test` — 85 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.4...v0.2.5
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.5...v0.2.6
           draft: true
           generate_release_notes: false
 
@@ -130,29 +130,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.5
+            # Model Fetch v0.2.6
 
-            Applying a provider strategy now keeps models that are still referenced by additional OpenClaw model consumers, preventing dangling configuration references.
+            This release repairs the filter strategy editor, restores the sidebar pin entry, and makes Model Fetch visible in the OpenClaw Android and iOS apps.
 
             ## Fixes
 
-            - **Reference protection now covers OpenClaw's explicit model consumers.** Model Fetch protects primary, heartbeat, subagent, compaction, and memory-flush models, as well as media, PDF, utility, decision, image, and voice models.
-            - **Additional tool and channel references are protected.** Exec reviewer, tools media preferred models, root and Agent TTS summary models, `channels.modelByChannel`, and Discord voice references are retained when they point to a pending deletion.
-            - **Deletion plans remain auditable.** Confirmation and apply results continue to show the exact configuration path that kept each protected model.
+            - **Filter strategies can be saved again.** After the OpenClaw upgrade the regular expression fields only committed on blur, so the save button stayed disabled and clicking it could never commit the pending edit. The fields now update the strategy as you type, and the save button enables without needing to leave the field first.
+            - **Model Fetch is listed in the sidebar pin editor.** The navigation entry declares `defaultVisible: false` so OpenClaw offers it under "Edit pinned items" instead of hard-coding it into the sidebar, and a one-time migration restores the previous pinned state on the first activation after the upgrade.
+            - **Model Fetch is visible in the Android and iOS apps.** The plugin now registers a `surface: "tab"` control UI descriptor, so the Gateway advertises it in the `controlUiTabs` payload of the hello message that the mobile apps read.
 
             ## Compatibility
 
             - No configuration migration is required.
-            - Replacement mode still removes unreferenced models that do not pass the saved filter after confirmation.
+            - Hosts that do not support control UI descriptors are left untouched; the browser sidebar entry keeps working.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 73 tests passed.
+            - `npm test` — 85 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.4...v0.2.5
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.5...v0.2.6
           generate_release_notes: false
           draft: false
           make_latest: true

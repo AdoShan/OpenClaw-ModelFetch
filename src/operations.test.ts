@@ -291,6 +291,65 @@ describe("Control UI operations", () => {
     expect(mutateConfigFile).not.toHaveBeenCalled();
   });
 
+  it("retries a config write that loses the race against another writer", async () => {
+    const { api, mutateConfigFile, getConfig } = createApi(
+      baseConfig({
+        openrouter: {
+          baseUrl: "https://openrouter.ai/api/v1",
+          api: "openai-responses",
+          models: [],
+        },
+      }),
+    );
+    const conflict = Object.assign(new Error("config changed since last load"), {
+      name: "ConfigMutationConflictError",
+      retryable: true,
+    });
+    mutateConfigFile.mockImplementationOnce(async () => {
+      throw conflict;
+    });
+    const operations = createModelFetchOperations({ api });
+
+    await operations.saveStrategy({
+      provider: "openrouter",
+      filter: { includeRegex: "^(openai|anthropic)/" },
+    });
+
+    expect(mutateConfigFile).toHaveBeenCalledTimes(2);
+    const pluginFilters = (
+      getConfig().plugins?.entries?.["model-fetch"]?.config as {
+        providers: Record<string, { filter: unknown }>;
+      }
+    ).providers;
+    expect(pluginFilters.openrouter.filter).toMatchObject({
+      includeRegex: "^(openai|anthropic)/",
+    });
+  });
+
+  it("does not retry a config write that failed for another reason", async () => {
+    const { api, mutateConfigFile } = createApi(
+      baseConfig({
+        openrouter: {
+          baseUrl: "https://openrouter.ai/api/v1",
+          api: "openai-responses",
+          models: [],
+        },
+      }),
+    );
+    mutateConfigFile.mockImplementationOnce(async () => {
+      throw new Error("config file is read only");
+    });
+    const operations = createModelFetchOperations({ api });
+
+    await expect(
+      operations.saveStrategy({
+        provider: "openrouter",
+        filter: { includeRegex: "^(openai|anthropic)/" },
+      }),
+    ).rejects.toThrow(/config file is read only/);
+    expect(mutateConfigFile).toHaveBeenCalledTimes(1);
+  });
+
   it("previews and applies the exact replacement after re-fetching", async () => {
     const stale = model("stale/model");
     const kept = model("openai/gpt-4o");

@@ -84,6 +84,42 @@ type ComputedPlan = {
   finalModels: ModelDefinitionLike[];
 };
 
+/**
+ * The host exposes a single-attempt config mutation to plugins, so a write
+ * that loses the race against another writer (for example an OpenClaw upgrade
+ * rewriting the config file) fails outright. The host's own config writer
+ * retries these conflicts, so mirror that behaviour here.
+ */
+const CONFIG_MUTATION_MAX_ATTEMPTS = 5;
+
+function isRetryableConfigConflict(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name !== "ConfigMutationConflictError") return false;
+  return (error as { retryable?: unknown }).retryable !== false;
+}
+
+async function mutateConfigFileWithRetry(
+  runtime: OpenClawPluginApi["runtime"],
+  params: Parameters<
+    OpenClawPluginApi["runtime"]["config"]["mutateConfigFile"]
+  >[0],
+): Promise<
+  Awaited<
+    ReturnType<OpenClawPluginApi["runtime"]["config"]["mutateConfigFile"]>
+  >
+> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < CONFIG_MUTATION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await runtime.config.mutateConfigFile(params);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableConfigConflict(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
 type SessionSelectionScope = {
   sessionKey?: string;
   agentId?: string;
@@ -654,7 +690,7 @@ export function createModelFetchOperations({
         ? savedTargetAgents(provider, config)
         : normalizeTargetAgents(targetAgents);
 
-    const result = await runtime.config.mutateConfigFile({
+    const result = await mutateConfigFileWithRetry(runtime, {
       base: "source",
       afterWrite: { mode: "auto" },
       mutate: (draft) => {
@@ -721,7 +757,7 @@ export function createModelFetchOperations({
     );
     let syncedAgents: string[] = [];
 
-    const result = await runtime.config.mutateConfigFile({
+    const result = await mutateConfigFileWithRetry(runtime, {
       base: "source",
       afterWrite: { mode: "auto" },
       mutate: (draft) => {

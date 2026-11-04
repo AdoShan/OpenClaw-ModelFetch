@@ -177,7 +177,7 @@ const ENGLISH_MESSAGES: InterfaceMessages = {
   fetchingModels: "Fetching...",
   strategyTitle: "Filter strategy",
   strategyCopy:
-    "Strategies are saved independently per Provider. Manually selected models enter the whitelist and override regex exclusions; you can also choose which agent model allowlists to sync. Regex results update on blur or Enter.",
+    "Strategies are saved independently per Provider. Manually selected models enter the whitelist and override regex exclusions; you can also choose which agent model allowlists to sync. Regex results update while you type.",
   saveStrategy: "Save strategy",
   includeRegex: "Include regex",
   excludeRegex: "Exclude regex",
@@ -275,7 +275,7 @@ const CHINESE_MESSAGES: InterfaceMessages = {
   fetchingModels: "正在获取...",
   strategyTitle: "筛选策略",
   strategyCopy:
-    "策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则失焦或按回车后更新结果。",
+    "策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则结果会随输入实时更新。",
   saveStrategy: "保存策略",
   includeRegex: "包含正则",
   excludeRegex: "排除正则",
@@ -435,7 +435,7 @@ const PAGE_MARKUP = `
       <div class="mf-panel-head">
         <div>
           <h2 class="mf-panel-title" id="mf-strategy-title" data-i18n="strategyTitle">筛选策略</h2>
-          <p class="mf-panel-copy" data-i18n="strategyCopy">策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则失焦或按回车后更新结果。</p>
+          <p class="mf-panel-copy" data-i18n="strategyCopy">策略按 Provider 独立保存。手动勾选会进入白名单，并覆盖正则排除结果；可指定同步到哪些 Agent 的模型 allowlist；正则结果会随输入实时更新。</p>
         </div>
         <div class="mf-panel-actions">
           <button class="mf-button is-small" data-ref="saveButton" type="button" disabled data-i18n="saveStrategy">保存策略</button>
@@ -1394,10 +1394,40 @@ export function mountModelFetchSettings(
     (event.currentTarget as HTMLInputElement).blur();
   }
 
+  /**
+   * Commit on every keystroke instead of waiting for `blur`.
+   *
+   * The save button stays disabled until the draft is dirty, and a disabled
+   * button never takes focus away from the regex field, so a blur-only commit
+   * deadlocks the save action. `commitRegex` is idempotent, so the blur
+   * listener below stays as a fallback for value changes that never fire an
+   * `input` event.
+   */
+  function handleRegexInput(
+    event: Event,
+    input: HTMLInputElement,
+    key: "includeRegex" | "excludeRegex",
+  ) {
+    if ((event as InputEvent).isComposing) return;
+    commitRegex(input, key);
+  }
+
   refs.includeRegex.addEventListener("blur", () =>
     commitRegex(refs.includeRegex, "includeRegex"),
   );
   refs.excludeRegex.addEventListener("blur", () =>
+    commitRegex(refs.excludeRegex, "excludeRegex"),
+  );
+  refs.includeRegex.addEventListener("input", (event) =>
+    handleRegexInput(event, refs.includeRegex, "includeRegex"),
+  );
+  refs.excludeRegex.addEventListener("input", (event) =>
+    handleRegexInput(event, refs.excludeRegex, "excludeRegex"),
+  );
+  refs.includeRegex.addEventListener("compositionend", () =>
+    commitRegex(refs.includeRegex, "includeRegex"),
+  );
+  refs.excludeRegex.addEventListener("compositionend", () =>
     commitRegex(refs.excludeRegex, "excludeRegex"),
   );
   refs.includeRegex.addEventListener("keydown", handleRegexKeydown);

@@ -341,7 +341,7 @@ describe("Model Fetch settings view", () => {
     ).toBe(false);
   });
 
-  it("updates regex selection only on blur or Enter", async () => {
+  it("updates regex selection while typing and enables saving without a blur", async () => {
     const harness = createHarness();
     await mountReady(harness);
     harness.container
@@ -356,12 +356,35 @@ describe("Model Fetch settings view", () => {
     )!;
     include.value = "^anthropic/";
     include.dispatchEvent(new harness.window.Event("input", { bubbles: true }));
-    expect(harness.container.querySelector('[data-ref="selectedCount"]')?.textContent).toBe("3");
-
-    include.dispatchEvent(new harness.window.Event("blur", { bubbles: false }));
     expect(harness.container.querySelector('[data-ref="selectedCount"]')?.textContent).toBe("1");
+
+    // The save button must become usable without a blur, otherwise a
+    // disabled button keeps the field focused and the save can never start.
+    expect(harness.container.querySelector('[data-ref="saveButton"]')?.hasAttribute("disabled")).toBe(
+      false,
+    );
     expect(harness.container.querySelector('[data-ref="applyButton"]')?.hasAttribute("disabled")).toBe(
       true,
+    );
+  });
+
+  it("keeps the save button disabled until the regex actually changes", async () => {
+    const harness = createHarness();
+    await mountReady(harness);
+
+    const include = harness.container.querySelector<HTMLInputElement>(
+      '[data-ref="includeRegex"]',
+    )!;
+    include.value = "";
+    include.dispatchEvent(new harness.window.Event("input", { bubbles: true }));
+    expect(harness.container.querySelector('[data-ref="saveButton"]')?.hasAttribute("disabled")).toBe(
+      true,
+    );
+
+    include.value = "^anthropic/";
+    include.dispatchEvent(new harness.window.Event("input", { bubbles: true }));
+    expect(harness.container.querySelector('[data-ref="saveButton"]')?.hasAttribute("disabled")).toBe(
+      false,
     );
   });
 

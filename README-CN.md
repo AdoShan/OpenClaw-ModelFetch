@@ -41,7 +41,7 @@ openclaw plugins install openclaw-plugin-model-fetch
 openclaw config set gateway.controlUi.experimental.customPlugins true --strict-json
 ```
 
-刷新浏览器页面后，Control UI 侧边栏会出现 **Model Fetch**。
+刷新浏览器页面后，Control UI 侧边栏会出现 **Model Fetch**。它同时也会出现在「页面」区的「编辑固定项」列表中，可按需固定或取消固定。
 
 ### 3. 检查安装
 
@@ -86,6 +86,12 @@ openclaw plugins doctor
 ### 侧边栏没有 Model Fetch 入口
 
 确认已开启 **Settings -> Labs -> Custom plugin UI**，然后刷新 Control UI。设置页直达地址是 `/settings/plugins/model-fetch?view=settings`。
+
+升级 OpenClaw 后首次打开时，Model Fetch 会从「页面」区自动恢复为固定项；此后手动取消固定将保持生效。
+
+### 手机 App 里看不到 Model Fetch
+
+Android 与 iOS App 通过 Gateway hello 消息中的 `controlUiTabs` 获取插件页面。请确认手机已配对并授予 `operator.read` 权限，然后重启 App 以重新获取 hello 消息。
 
 ### 获取远端模型失败
 

@@ -1,6 +1,6 @@
 {
   "name": "openclaw-plugin-model-fetch",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "OpenClaw plugin tool that refreshes configured provider model lists into OpenClaw config with independent per-provider filters.",
   "license": "MIT",
   "repository": {
@@ -52,7 +52,7 @@
   "devDependencies": {
     "esbuild": "^0.28.2",
     "linkedom": "^0.18.13",
-    "openclaw": "latest",
+    "openclaw": "2026.10.10",
     "typescript": "7.0.2",
     "vitest": "^3.2.0"
   },

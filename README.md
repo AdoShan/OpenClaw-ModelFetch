@@ -41,7 +41,7 @@ Alternatively, enable it directly with the OpenClaw CLI:
 openclaw config set gateway.controlUi.experimental.customPlugins true --strict-json
 ```
 
-Reload the browser page. **Model Fetch** should now appear in the Control UI sidebar.
+Reload the browser page. **Model Fetch** should now appear in the Control UI sidebar. It is also listed under the sidebar "Edit pinned items" menu, so you can pin or unpin it as needed.
 
 ### 3. Verify the installation
 
@@ -86,6 +86,12 @@ Run `openclaw plugins list` and `openclaw plugins doctor`. Reinstall the package
 ### The Model Fetch navigation entry is missing
 
 Confirm that **Settings -> Labs -> Custom plugin UI** is enabled, then reload the Control UI. The direct settings route is `/settings/plugins/model-fetch?view=settings`.
+
+After an OpenClaw upgrade, the first activation restores Model Fetch as a pinned item in the "Pages" section. Later manual removals are kept.
+
+### Model Fetch does not show up in the mobile apps
+
+The Android and iOS apps learn about plugin pages from the `controlUiTabs` payload in the Gateway hello message. Make sure the phone is paired with the `operator.read` scope, then restart the app so it fetches a fresh hello message.
 
 ### Fetching remote models fails
 
