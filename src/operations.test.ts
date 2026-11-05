@@ -66,6 +66,7 @@ function createApi(initialConfig: Record<string, unknown>) {
     getConfig: () => config as {
       agents?: {
         defaults?: {
+          models?: Record<string, Record<string, unknown>>;
           modelPolicy?: { allow?: string[] };
           model?: { primary?: string; fallbacks?: string[] };
           utilityModel?: string;
@@ -1462,6 +1463,91 @@ describe("Control UI operations", () => {
     expect(preview.plan.removedIds).toEqual(["MiniMax-M3"]);
     expect(preview.plan.caseVariants).toEqual([
       { removedId: "MiniMax-M3", survivingModelId: "minimax-m3" },
+    ]);
+  });
+
+  it("migrates aliases and allowlists to the surviving case variant", async () => {
+    const staleRef = "magpie/auto/MiniMax-M3";
+    const survivingRef = "magpie/auto/minimax-m3";
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: {
+          models: {
+            [staleRef]: { alias: "Minimax" },
+          },
+          modelPolicy: {
+            allow: ["magpie/*", staleRef],
+          },
+        },
+        entries: {
+          main: {
+            models: {
+              [staleRef]: { alias: "Agent Minimax" },
+            },
+            modelPolicy: {
+              allow: [staleRef],
+            },
+          },
+        },
+      },
+      ...baseConfig(
+        {
+          magpie: {
+            baseUrl: "https://magpie.example/v1",
+            api: "openai-responses",
+            models: [model("auto/MiniMax-M3"), model("auto/minimax-m3")],
+          },
+        },
+        {
+          magpie: {
+            filter: { includeRegex: "^auto/minimax-m3$", manualIds: [] },
+            targetAgents: ["main"],
+          },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("auto/minimax-m3")]),
+    });
+
+    const preview = await operations.previewApply("magpie");
+    expect(preview.plan.removedIds).toEqual(["auto/MiniMax-M3"]);
+    expect(preview.plan.caseVariants).toEqual([
+      {
+        removedId: "auto/MiniMax-M3",
+        survivingModelId: "auto/minimax-m3",
+      },
+    ]);
+
+    const applied = await operations.applyStrategy({
+      provider: "magpie",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: preview.plan.removedIds,
+      targetAgents: ["main"],
+    });
+
+    expect(getConfig().models?.providers?.magpie.models?.map((row) => row.id)).toEqual([
+      "auto/minimax-m3",
+    ]);
+    expect(getConfig().agents?.defaults?.models).toEqual({
+      [survivingRef]: { alias: "Minimax" },
+    });
+    expect(getConfig().agents?.defaults?.modelPolicy?.allow).toEqual([
+      "magpie/*",
+      survivingRef,
+    ]);
+    expect(getConfig().agents?.entries?.main?.models).toEqual({
+      [survivingRef]: { alias: "Agent Minimax" },
+    });
+    expect(getConfig().agents?.entries?.main?.modelPolicy?.allow).toEqual([
+      survivingRef,
+    ]);
+    expect(applied.rewrittenReferences).toEqual([
+      "agents.defaults.modelPolicy.allow",
+      "agents.defaults.models.magpie/auto/minimax-m3",
+      "agents.entries.main.modelPolicy.allow",
+      "agents.entries.main.models.magpie/auto/minimax-m3",
     ]);
   });
 

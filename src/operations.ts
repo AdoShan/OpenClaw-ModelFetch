@@ -19,6 +19,7 @@ import {
   fetchProviderModels,
   getProvider,
   mergeModels,
+  migrateModelRefEntries,
   resolveDefaultModelRef,
   resolveApiKey,
   resolveProviderFilter,
@@ -878,6 +879,29 @@ export function createModelFetchOperations({
             rewrite.toRef,
           );
           if (result.changed) rewrittenReferences.push(...result.paths);
+        }
+
+        // `agents.*.models` (which carries `alias`) and `modelPolicy.allow`
+        // are keyed by model reference but are not model references, so the
+        // walker above leaves them alone. A case-only rename has to move them
+        // to the surviving spelling; otherwise the alias and the allowlist
+        // entry are dropped along with the stale id.
+        const entryMigration = migrateModelRefEntries(
+          config,
+          [
+            ...rewrites.map((rewrite) => ({
+              fromRef: rewrite.fromRef,
+              toRef: rewrite.toRef,
+            })),
+            ...computed.caseVariants.map((variant) => ({
+              fromRef: `${provider}/${variant.removedId}`,
+              toRef: `${provider}/${variant.survivingModelId}`,
+            })),
+          ],
+          { targetAgents: nextTargetAgents },
+        );
+        if (entryMigration.changed) {
+          rewrittenReferences.push(...entryMigration.paths);
         }
 
         // The rewrites may have released the references that kept a model in

@@ -790,6 +790,126 @@ function rewriteDiscordVoiceModelReferences(
   writeSetting(asOptionalRecord(voiceConfig.tts), "summaryModel", `${basePath}.tts`);
 }
 
+type ModelRefPair = { fromRef: string; toRef: string };
+
+/**
+ * Moves the config entries that OpenClaw keys by model reference from one
+ * spelling to another.
+ *
+ * `agents.*.models` carries per-model metadata such as `alias`, and
+ * `modelPolicy.allow` names models by reference. A provider can hold the same
+ * model under two letter-case spellings, so retiring the stale spelling has to
+ * move those entries to the surviving one. Dropping them instead would throw
+ * the alias away and leave the metadata attached to a model that no longer
+ * exists.
+ */
+export function migrateModelRefEntries(
+  draft: unknown,
+  pairs: readonly ModelRefPair[],
+  options: { targetAgents?: readonly string[] } = {},
+): { changed: boolean; paths: string[] } {
+  const replacements = new Map<string, string>();
+  for (const pair of pairs) {
+    const from = pair.fromRef.trim();
+    const to = pair.toRef.trim();
+    if (!from || !to || from === to) continue;
+    replacements.set(from, to);
+  }
+  if (replacements.size === 0) return { changed: false, paths: [] };
+
+  const changed: string[] = [];
+
+  const moveEntry = (container: unknown, basePath: string): void => {
+    if (!isRecord(container)) return;
+    for (const [from, to] of replacements) {
+      if (!Object.prototype.hasOwnProperty.call(container, from)) continue;
+      const moved = container[from];
+      const existing = container[to];
+      // The surviving spelling wins on conflict so an alias already set for it
+      // is not overwritten by the stale one.
+      container[to] =
+        isRecord(moved) && isRecord(existing) ? { ...moved, ...existing } : (existing ?? moved);
+      delete container[from];
+      changed.push(`${basePath}.${to}`);
+    }
+  };
+
+  const rewriteAllowList = (
+    container: unknown,
+    field: string,
+    basePath: string,
+  ): void => {
+    if (!isRecord(container)) return;
+    const list = container[field];
+    if (!Array.isArray(list)) return;
+    const next: unknown[] = [];
+    const seen = new Set<string>();
+    let touched = false;
+    for (const item of list) {
+      if (typeof item !== "string") {
+        next.push(item);
+        continue;
+      }
+      const trimmed = item.trim();
+      const mapped = replacements.get(trimmed) ?? trimmed;
+      if (mapped !== trimmed) touched = true;
+      if (seen.has(mapped)) {
+        touched = true;
+        continue;
+      }
+      seen.add(mapped);
+      next.push(mapped);
+    }
+    if (!touched) return;
+    container[field] = next;
+    changed.push(`${basePath}.${field}`);
+  };
+
+  if (!isRecord(draft) || !isRecord(draft.agents)) {
+    return { changed: false, paths: [] };
+  }
+  const agents = draft.agents;
+
+  const defaults = asOptionalRecord(agents.defaults);
+  if (defaults) {
+    moveEntry(defaults.models, "agents.defaults.models");
+    rewriteAllowList(defaults.modelPolicy, "allow", "agents.defaults.modelPolicy");
+  }
+
+  const requestedAgents = (options.targetAgents ?? [])
+    .map((agentId) => agentId.trim())
+    .filter(Boolean);
+  const agentScope = requestedAgents.length > 0 ? new Set(requestedAgents) : null;
+  const migrateAgent = (entry: unknown, basePath: string): void => {
+    const agent = asOptionalRecord(entry);
+    if (!agent) return;
+    moveEntry(agent.models, `${basePath}.models`);
+    rewriteAllowList(agent.modelPolicy, "allow", `${basePath}.modelPolicy`);
+  };
+
+  if (isRecord(agents.entries)) {
+    for (const agentId of Object.keys(agents.entries).sort((left, right) =>
+      left.localeCompare(right),
+    )) {
+      if (agentScope && !agentScope.has(agentId)) continue;
+      migrateAgent(agents.entries[agentId], `agents.entries.${agentId}`);
+    }
+  } else if (Array.isArray(agents.list)) {
+    agents.list.forEach((entry, index) => {
+      const agent = asOptionalRecord(entry);
+      const agentId =
+        typeof agent?.id === "string" && agent.id.trim() ? agent.id.trim() : undefined;
+      if (agentScope && (!agentId || !agentScope.has(agentId))) return;
+      migrateAgent(agent, `agents.list[${index}]`);
+    });
+  }
+
+  return {
+    changed: changed.length > 0,
+    paths: changed.sort((left, right) => left.localeCompare(right)),
+  };
+}
+
 function visitAgentModelReferences(
   path: string,
   agent: Record<string, unknown>,

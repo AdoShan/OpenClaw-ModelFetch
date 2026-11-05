@@ -91,28 +91,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.7
+            # Model Fetch v0.2.8
 
-            This release lets a protected model be deleted by rewriting the references that keep it alive, and explains removals that only differ from a surviving model by letter case.
+            This release automatically replaces stale case-only model spellings with the surviving model and carries aliases and allowlists across the rename.
 
             ## Fixes
 
-            - **Protected models can now be deleted.** A model that other configuration still references was kept in the list with no way to remove it. Every protected model now carries a "Replace references with" dropdown in the delete confirmation, defaulting to "Default model" (the agent's configured `model.primary`). Choosing a target rewrites the matching references in `openclaw.json` and recomputes the final model list, so the model is really dropped. "Keep this model" stays available to leave the model in place.
-            - **Case-only duplicates are explained.** A provider list can hold both `auto/MiniMax-M3` and `auto/minimax-m3`. When the removed entry only differs from a surviving entry by letter case, the delete confirmation now says so instead of leaving two look-alike ids unexplained.
+            - **Case variants replace automatically.** When the same Provider contains both `auto/MiniMax-M3` and `auto/minimax-m3`, a protected model's replacement dropdown now defaults to the surviving spelling instead of the agent default model.
+            - **Aliases and allowlists survive.** Applying the strategy moves entries in `agents.defaults.models`, `agents.entries.*.models`, and `modelPolicy.allow` to the surviving spelling, preserving aliases and avoiding dangling references.
+            - **Legacy agent configs stay supported.** The same metadata migration also handles OpenClaw's legacy `agents.list` structure.
 
             ## Compatibility
 
-            - No configuration migration is required.
-            - A rewrite that points at another provider, or at a model the same plan removes, is rejected and nothing is written.
+            - Existing model aliases and allowlists are migrated automatically.
+            - Both `agents.entries` and legacy `agents.list` configurations are supported.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 102 tests passed.
+            - `npm test` — 109 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.6...v0.2.7
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.7...v0.2.8
           draft: true
           generate_release_notes: false
 
@@ -129,28 +130,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.7
+            # Model Fetch v0.2.8
 
-            This release lets a protected model be deleted by rewriting the references that keep it alive, and explains removals that only differ from a surviving model by letter case.
+            This release automatically replaces stale case-only model spellings with the surviving model and carries aliases and allowlists across the rename.
 
             ## Fixes
 
-            - **Protected models can now be deleted.** A model that other configuration still references was kept in the list with no way to remove it. Every protected model now carries a "Replace references with" dropdown in the delete confirmation, defaulting to "Default model" (the agent's configured `model.primary`). Choosing a target rewrites the matching references in `openclaw.json` and recomputes the final model list, so the model is really dropped. "Keep this model" stays available to leave the model in place.
-            - **Case-only duplicates are explained.** A provider list can hold both `auto/MiniMax-M3` and `auto/minimax-m3`. When the removed entry only differs from a surviving entry by letter case, the delete confirmation now says so instead of leaving two look-alike ids unexplained.
+            - **Case variants replace automatically.** When the same Provider contains both `auto/MiniMax-M3` and `auto/minimax-m3`, a protected model's replacement dropdown now defaults to the surviving spelling instead of the agent default model.
+            - **Aliases and allowlists survive.** Applying the strategy moves entries in `agents.defaults.models`, `agents.entries.*.models`, and `modelPolicy.allow` to the surviving spelling, preserving aliases and avoiding dangling references.
+            - **Legacy agent configs stay supported.** The same metadata migration also handles OpenClaw's legacy `agents.list` structure.
 
             ## Compatibility
 
-            - No configuration migration is required.
-            - A rewrite that points at another provider, or at a model the same plan removes, is rejected and nothing is written.
+            - Existing model aliases and allowlists are migrated automatically.
+            - Both `agents.entries` and legacy `agents.list` configurations are supported.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 102 tests passed.
+            - `npm test` — 109 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.6...v0.2.7
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.7...v0.2.8
           generate_release_notes: false
           draft: false
           make_latest: true

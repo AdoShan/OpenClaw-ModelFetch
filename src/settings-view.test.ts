@@ -634,6 +634,69 @@ describe("Model Fetch settings view", () => {
     expect(options.find((option) => option.text === "保留该模型")?.selected).toBe(false);
   });
 
+  it("defaults a protected model to its surviving case variant and submits it", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          removedIds: ["stale/model"],
+          protectedModels: [
+            {
+              modelId: "MiniMax-M3",
+              ref: "openrouter/MiniMax-M3",
+              references: ["agents.defaults.utilityModel"],
+            },
+          ],
+          selectedIds: ["openai/gpt-4o", "anthropic/claude", "minimax-m3"],
+          defaultModelRef: "openrouter/openai/gpt-4o",
+        }),
+        models: [
+          ...openRouterModels,
+          { id: "MiniMax-M3", name: "MiniMax M3" },
+          { id: "minimax-m3", name: "MiniMax M3" },
+        ],
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const select = harness.container.querySelector<HTMLSelectElement>(
+      ".mf-reference-select",
+    )!;
+    expect([...select.options].find((option) => option.selected)?.textContent).toBe(
+      "minimax-m3",
+    );
+
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() =>
+      expect(
+        harness.requests.some((request) => request.actionId === "strategy.apply"),
+      ).toBe(true),
+    );
+    const apply = harness.requests.find(
+      (request) => request.actionId === "strategy.apply",
+    )!;
+    expect((apply.payload as { referenceRewrites?: unknown }).referenceRewrites).toEqual([
+      {
+        protectedModelId: "MiniMax-M3",
+        targetRef: "openrouter/minimax-m3",
+        useDefaultModel: false,
+      },
+    ]);
+  });
+
   it("sends the chosen rewrite target with the apply call", async () => {
     const harness = createHarness();
     harness.handlers.set("strategy.preview", async () => {

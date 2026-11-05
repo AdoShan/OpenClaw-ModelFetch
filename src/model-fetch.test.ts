@@ -9,6 +9,7 @@ import {
   createModelFetchTool,
   fetchProviderModels,
   mergeModels,
+  migrateModelRefEntries,
   resolveDefaultModelRef,
   resolveEffectiveFilter,
   resolveProviderFilter,
@@ -511,6 +512,153 @@ describe("model reference rewriting", () => {
 
   it("returns nothing when no agent names a primary model", () => {
     expect(resolveDefaultModelRef({ agents: { entries: {} } })).toBeUndefined();
+  });
+});
+
+describe("model reference entry migration", () => {
+  it("moves the alias and the allowlist entry to the surviving spelling", () => {
+    const draft = {
+      agents: {
+        defaults: {
+          models: {
+            "magpie/auto/MiniMax-M3": { alias: "Minimax" },
+            "magpie/auto/minimax-m3": {},
+          },
+          modelPolicy: {
+            allow: ["magpie/*", "magpie/auto/MiniMax-M3", "magpie/auto/minimax-m3"],
+          },
+        },
+        entries: {
+          main: {
+            models: { "magpie/auto/MiniMax-M3": { alias: "Agent alias" } },
+            modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] },
+          },
+        },
+      },
+    };
+
+    const result = migrateModelRefEntries(draft, [
+      { fromRef: "magpie/auto/MiniMax-M3", toRef: "magpie/auto/minimax-m3" },
+    ]);
+
+    expect(result.changed).toBe(true);
+    expect(draft.agents.defaults.models).toEqual({
+      "magpie/auto/minimax-m3": { alias: "Minimax" },
+    });
+    expect(draft.agents.defaults.modelPolicy.allow).toEqual([
+      "magpie/*",
+      "magpie/auto/minimax-m3",
+    ]);
+    expect(draft.agents.entries.main.models).toEqual({
+      "magpie/auto/minimax-m3": { alias: "Agent alias" },
+    });
+    expect(draft.agents.entries.main.modelPolicy.allow).toEqual([
+      "magpie/auto/minimax-m3",
+    ]);
+  });
+
+  it("keeps the surviving alias when both spellings already carry one", () => {
+    const draft = {
+      agents: {
+        defaults: {
+          models: {
+            "magpie/auto/MiniMax-M3": { alias: "Stale" },
+            "magpie/auto/minimax-m3": { alias: "Current" },
+          },
+        },
+      },
+    };
+
+    migrateModelRefEntries(draft, [
+      { fromRef: "magpie/auto/MiniMax-M3", toRef: "magpie/auto/minimax-m3" },
+    ]);
+
+    expect(draft.agents.defaults.models).toEqual({
+      "magpie/auto/minimax-m3": { alias: "Current" },
+    });
+  });
+
+  it("leaves other agents alone when target agents are scoped", () => {
+    const draft = {
+      agents: {
+        entries: {
+          main: { modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] } },
+          worker: { modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] } },
+        },
+      },
+    };
+
+    migrateModelRefEntries(
+      draft,
+      [{ fromRef: "magpie/auto/MiniMax-M3", toRef: "magpie/auto/minimax-m3" }],
+      { targetAgents: ["main"] },
+    );
+
+    expect(draft.agents.entries.main.modelPolicy.allow).toEqual([
+      "magpie/auto/minimax-m3",
+    ]);
+    expect(draft.agents.entries.worker.modelPolicy.allow).toEqual([
+      "magpie/auto/MiniMax-M3",
+    ]);
+  });
+
+  it("migrates legacy agent list entries and honours their ids", () => {
+    const draft = {
+      agents: {
+        list: [
+          {
+            id: "main",
+            models: {
+              "magpie/auto/MiniMax-M3": { alias: "Minimax" },
+            },
+            modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] },
+          },
+          {
+            id: "worker",
+            models: {
+              "magpie/auto/MiniMax-M3": { alias: "Worker alias" },
+            },
+            modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] },
+          },
+        ],
+      },
+    };
+
+    const result = migrateModelRefEntries(
+      draft,
+      [{ fromRef: "magpie/auto/MiniMax-M3", toRef: "magpie/auto/minimax-m3" }],
+      { targetAgents: ["main"] },
+    );
+
+    expect(draft.agents.list[0]).toEqual({
+      id: "main",
+      models: {
+        "magpie/auto/minimax-m3": { alias: "Minimax" },
+      },
+      modelPolicy: { allow: ["magpie/auto/minimax-m3"] },
+    });
+    expect(draft.agents.list[1]).toEqual({
+      id: "worker",
+      models: {
+        "magpie/auto/MiniMax-M3": { alias: "Worker alias" },
+      },
+      modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] },
+    });
+    expect(result.paths).toEqual([
+      "agents.list[0].modelPolicy.allow",
+      "agents.list[0].models.magpie/auto/minimax-m3",
+    ]);
+  });
+
+  it("reports no change when the stale spelling is absent", () => {
+    const draft = {
+      agents: { defaults: { modelPolicy: { allow: ["magpie/auto/minimax-m3"] } } },
+    };
+    const result = migrateModelRefEntries(draft, [
+      { fromRef: "magpie/auto/MiniMax-M3", toRef: "magpie/auto/minimax-m3" },
+    ]);
+    expect(result.changed).toBe(false);
+    expect(result.paths).toEqual([]);
   });
 });
 

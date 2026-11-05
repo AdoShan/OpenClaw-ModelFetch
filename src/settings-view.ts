@@ -1300,13 +1300,36 @@ export function mountModelFetchSettings(
   }
 
   /**
+   * The surviving spelling of the same model, when the provider list holds the
+   * id under a different letter case.
+   *
+   * Such a pair is one remote model under two spellings, so pointing the
+   * reference at the surviving spelling keeps it working while the stale
+   * spelling is retired. That is the natural default, and it is why the
+   * dropdown does not fall back to the agent default model for these rows.
+   */
+  function caseVariantChoice(entry: ProtectedModel): string | undefined {
+    const lowerId = entry.modelId.toLowerCase();
+    return rewriteCandidates(entry.modelId).find(
+      (candidate) =>
+        candidate.ref !== entry.ref && candidate.label.toLowerCase() === lowerId,
+    )?.ref;
+  }
+
+  function defaultRewriteChoice(entry: ProtectedModel): string {
+    return caseVariantChoice(entry) ?? DEFAULT_MODEL_OPTION;
+  }
+
+  /**
    * Translates the dropdown choices into the rewrite instructions sent with
    * the apply call.
    *
    * The dropdown opens on "Default model", so a protected model is rewritten
-   * to the agent default unless the user picks "Keep this model". The default
-   * model is resolved here so the backend receives a concrete reference. When
-   * it cannot be resolved the rewrite is skipped, which keeps the model
+   * to the agent default unless the model has a surviving letter-case
+   * variant, which is the same remote model and therefore wins as the target.
+   * "Keep this model" leaves everything untouched. The default model is
+   * resolved here so the backend receives a concrete reference. When it
+   * cannot be resolved the rewrite is skipped, which keeps the model
    * protected rather than pointing the config at nothing.
    */
   function buildReferenceRewrites(
@@ -1315,7 +1338,7 @@ export function mountModelFetchSettings(
   ): ReferenceRewrite[] {
     const rewrites: ReferenceRewrite[] = [];
     for (const entry of plan.protectedModels) {
-      const choice = rewriteSelections.get(entry.modelId) ?? DEFAULT_MODEL_OPTION;
+      const choice = rewriteSelections.get(entry.modelId) ?? defaultRewriteChoice(entry);
 
       if (choice === DEFAULT_MODEL_OPTION) {
         if (!defaultModelRef) continue;
@@ -1381,10 +1404,11 @@ export function mountModelFetchSettings(
       select.append(keepOption);
 
       // The dropdown starts on "Default model", which is the replacement the
-      // user asked for by default. "Keep this model" stays available so a
+      // user asked for by default, unless the list holds the same model under
+      // a different letter case. "Keep this model" stays available so a
       // protected model can still be left in place.
       const chosen = rewriteSelections.get(entry.modelId);
-      const selectedValue = chosen ?? DEFAULT_MODEL_OPTION;
+      const selectedValue = chosen ?? defaultRewriteChoice(entry);
       for (const option of select.options) {
         if (option.value === selectedValue) option.selected = true;
       }
