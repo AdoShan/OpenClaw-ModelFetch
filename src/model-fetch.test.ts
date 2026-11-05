@@ -4,12 +4,15 @@ import { getToolPluginMetadata } from "openclaw/plugin-sdk/tool-plugin";
 import {
   applyModelReferenceProtection,
   buildModelsEndpoint,
+  collectCaseVariantRelations,
   collectModelReferenceUsages,
   createModelFetchTool,
   fetchProviderModels,
   mergeModels,
+  resolveDefaultModelRef,
   resolveEffectiveFilter,
   resolveProviderFilter,
+  rewriteModelReferences,
   syncAgentModelEntries,
   selectFetchedModels,
   syncConfiguredModelPolicyAllow,
@@ -422,6 +425,121 @@ describe("model reference protection", () => {
     });
     expect(protection.models.map((row) => row.id)).toEqual(["keep"]);
     expect(protection.protectedModels).toEqual([]);
+  });
+});
+
+describe("model reference rewriting", () => {
+  const config = {
+    agents: {
+      defaults: {
+        model: { primary: "magpie/auto/primary", fallbacks: ["magpie/auto/old"] },
+        utilityModel: "magpie/auto/old",
+        heartbeat: { model: { primary: "magpie/auto/old", fallbacks: [] } },
+      },
+      entries: {
+        main: {
+          model: "magpie/auto/old",
+          tts: { summaryModel: "magpie/auto/old" },
+        },
+      },
+    },
+    hooks: { gmail: { model: "magpie/auto/old" } },
+    tts: { summaryModel: "magpie/auto/old" },
+    channels: {
+      modelByChannel: { telegram: { main: "magpie/auto/old" } },
+      discord: { voice: { model: "magpie/auto/old" } },
+    },
+    tools: {
+      exec: { reviewer: { model: { primary: "magpie/auto/old", fallbacks: [] } } },
+      media: { audio: { preferredModel: "magpie/auto/old" } },
+    },
+  };
+
+  it("rewrites every consumer that names the model", () => {
+    const draft = structuredClone(config);
+    const result = rewriteModelReferences(draft, "magpie/auto/old", "magpie/auto/new");
+
+    expect(result.changed).toBe(true);
+    expect(draft.agents.defaults.model.fallbacks).toEqual(["magpie/auto/new"]);
+    expect(draft.agents.defaults.utilityModel).toBe("magpie/auto/new");
+    expect(draft.agents.defaults.heartbeat.model.primary).toBe("magpie/auto/new");
+    expect(draft.agents.entries.main.model).toBe("magpie/auto/new");
+    expect(draft.agents.entries.main.tts.summaryModel).toBe("magpie/auto/new");
+    expect(draft.hooks.gmail.model).toBe("magpie/auto/new");
+    expect(draft.tts.summaryModel).toBe("magpie/auto/new");
+    expect(draft.channels.modelByChannel.telegram.main).toBe("magpie/auto/new");
+    expect(draft.channels.discord.voice.model).toBe("magpie/auto/new");
+    expect(draft.tools.exec.reviewer.model.primary).toBe("magpie/auto/new");
+    expect(draft.tools.media.audio.preferredModel).toBe("magpie/auto/new");
+  });
+
+  it("leaves unrelated references alone", () => {
+    const draft = structuredClone(config);
+    const result = rewriteModelReferences(draft, "magpie/auto/missing", "magpie/auto/new");
+
+    expect(result.changed).toBe(false);
+    expect(result.paths).toEqual([]);
+    expect(draft.agents.defaults.utilityModel).toBe("magpie/auto/old");
+  });
+
+  it("does nothing when the target equals the source", () => {
+    const draft = structuredClone(config);
+    const result = rewriteModelReferences(draft, "magpie/auto/old", "magpie/auto/old");
+    expect(result.changed).toBe(false);
+  });
+
+  it("resolves the default model from the agent defaults", () => {
+    expect(
+      resolveDefaultModelRef({
+        agents: { defaults: { model: { primary: "magpie/auto/primary" } } },
+      }),
+    ).toBe("magpie/auto/primary");
+  });
+
+  it("falls back to the first agent that names a primary model", () => {
+    expect(
+      resolveDefaultModelRef({
+        agents: {
+          defaults: { model: { primary: "" } },
+          entries: {
+            blank: { model: "magpie/auto/from-entry" },
+          },
+        },
+      }),
+    ).toBe("magpie/auto/from-entry");
+  });
+
+  it("returns nothing when no agent names a primary model", () => {
+    expect(resolveDefaultModelRef({ agents: { entries: {} } })).toBeUndefined();
+  });
+});
+
+describe("case variant relations", () => {
+  it("pairs a removal with the surviving model that only differs in case", () => {
+    const relations = collectCaseVariantRelations(
+      ["auto/MiniMax-M3", "other/model"],
+      ["auto/minimax-m3", "unrelated/model"],
+    );
+
+    expect(relations).toEqual([
+      { removedId: "auto/MiniMax-M3", survivingModelId: "auto/minimax-m3" },
+    ]);
+  });
+
+  it("reports nothing when the ids are identical", () => {
+    const relations = collectCaseVariantRelations(
+      ["auto/minimax-m3"],
+      ["auto/minimax-m3"],
+    );
+    expect(relations).toEqual([]);
+  });
+
+  it("reports nothing when the ids differ beyond letter case", () => {
+    const relations = collectCaseVariantRelations(
+      ["auto/minimax-m3-turbo"],
+      ["auto/minimax-m3"],
+    );
+    expect(relations).toEqual([]);
   });
 });
 

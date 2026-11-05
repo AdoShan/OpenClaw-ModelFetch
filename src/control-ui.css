@@ -740,12 +740,20 @@
 
 .mf-reference-item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 220px);
+  align-items: center;
   gap: 2px;
   padding: 6px 0;
 }
 
 .mf-reference-item + .mf-reference-item {
   border-top: 1px solid var(--mf-border);
+}
+
+.mf-reference-details {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .mf-reference-item code {
@@ -757,6 +765,25 @@
 }
 
 .mf-reference-item span {
+  color: var(--mf-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mf-reference-select {
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.mf-delete-item {
+  display: grid;
+  gap: 2px;
+  padding: 3px 0;
+}
+
+.mf-delete-item__note {
   color: var(--mf-muted);
   font-size: 11px;
   line-height: 1.5;

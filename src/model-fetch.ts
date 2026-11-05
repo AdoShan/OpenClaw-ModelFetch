@@ -599,6 +599,197 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
   }
 }
 
+/**
+ * Rewrites the explicit model references that name `fromRef` to `toRef`.
+ *
+ * The reference collector only reads, so the walk is repeated here with a
+ * writable setter. `forEachExplicitModelReference` reports the exact path of
+ * every reference it finds, so the setter mirrors that path shape.
+ */
+export function rewriteModelReferences(
+  draft: unknown,
+  fromRef: string,
+  toRef: string,
+): { changed: boolean; paths: string[] } {
+  if (!isRecord(draft)) return { changed: false, paths: [] };
+  const source = fromRef.trim();
+  const target = toRef.trim();
+  if (!source || !target || source === target) return { changed: false, paths: [] };
+
+  const changed: string[] = [];
+
+  const writeScalar = (container: unknown, field: string, basePath: string): void => {
+    if (!isRecord(container)) return;
+    const current = container[field];
+    if (typeof current !== "string" || current.trim() !== source) return;
+    container[field] = target;
+    changed.push(`${basePath}.${field}`);
+  };
+
+  const writeSetting = (container: unknown, field: string, basePath: string): void => {
+    if (!isRecord(container)) return;
+    const current = container[field];
+    if (typeof current === "string") {
+      if (current.trim() !== source) return;
+      container[field] = target;
+      changed.push(`${basePath}.${field}`);
+      return;
+    }
+    if (!isRecord(current)) return;
+    if (typeof current.primary === "string" && current.primary.trim() === source) {
+      current.primary = target;
+      changed.push(`${basePath}.${field}.primary`);
+    }
+    const fallbacks = current.fallbacks;
+    if (!Array.isArray(fallbacks)) return;
+    fallbacks.forEach((fallback, index) => {
+      if (typeof fallback !== "string" || fallback.trim() !== source) return;
+      fallbacks[index] = target;
+      changed.push(`${basePath}.${field}.fallbacks[${index}]`);
+    });
+  };
+
+  const tools = isRecord(draft.tools) ? draft.tools : undefined;
+  if (tools) {
+    const exec = asOptionalRecord(tools.exec);
+    const reviewer = asOptionalRecord(exec?.reviewer);
+    if (isRecord(reviewer)) writeSetting(reviewer, "model", "tools.exec.reviewer");
+
+    if (isRecord(tools.media)) {
+      for (const capability of ["image", "audio", "video"] as const) {
+        const media = asOptionalRecord(tools.media[capability]);
+        if (!media) continue;
+        writeScalar(media, "preferredModel", `tools.media.${capability}`);
+      }
+    }
+  }
+
+  const agents = isRecord(draft.agents) ? draft.agents : undefined;
+  const defaults = asOptionalRecord(agents?.defaults);
+  if (defaults) rewriteAgentModelReferences(defaults, "agents.defaults", false, writeScalar, writeSetting);
+
+  if (agents && isRecord(agents.entries)) {
+    for (const agentId of Object.keys(agents.entries).sort((left, right) => left.localeCompare(right))) {
+      const entry = agents.entries[agentId];
+      if (!isRecord(entry)) continue;
+      rewriteAgentModelReferences(
+        entry,
+        `agents.entries.${agentId}`,
+        true,
+        writeScalar,
+        writeSetting,
+      );
+    }
+  } else if (agents && Array.isArray(agents.list)) {
+    agents.list.forEach((entry, index) => {
+      if (!isRecord(entry)) return;
+      rewriteAgentModelReferences(
+        entry,
+        `agents.list[${index}]`,
+        true,
+        writeScalar,
+        writeSetting,
+      );
+    });
+  }
+
+  const tts = asOptionalRecord(draft.tts);
+  if (tts) writeSetting(tts, "summaryModel", "tts");
+
+  const hooks = isRecord(draft.hooks) ? draft.hooks : undefined;
+  if (hooks) {
+    if (isRecord(hooks.gmail)) writeScalar(hooks.gmail, "model", "hooks.gmail");
+    if (Array.isArray(hooks.mappings)) {
+      hooks.mappings.forEach((mapping, index) => {
+        if (!isRecord(mapping)) return;
+        writeScalar(mapping, "model", `hooks.mappings[${index}]`);
+      });
+    }
+  }
+
+  const channels = isRecord(draft.channels) ? draft.channels : undefined;
+  if (channels) {
+    const modelByChannel = isRecord(channels.modelByChannel) ? channels.modelByChannel : undefined;
+    if (modelByChannel) {
+      for (const channelId of Object.keys(modelByChannel).sort((left, right) => left.localeCompare(right))) {
+        const channelMap = modelByChannel[channelId];
+        if (!isRecord(channelMap)) continue;
+        for (const targetId of Object.keys(channelMap).sort((left, right) => left.localeCompare(right))) {
+          writeSetting(channelMap, targetId, `channels.modelByChannel.${channelId}`);
+        }
+      }
+    }
+
+    const discord = asOptionalRecord(channels.discord);
+    if (discord) {
+      rewriteDiscordVoiceModelReferences(discord.voice, "channels.discord.voice", writeScalar, writeSetting);
+      if (isRecord(discord.accounts)) {
+        for (const accountId of Object.keys(discord.accounts).sort((left, right) => left.localeCompare(right))) {
+          rewriteDiscordVoiceModelReferences(
+            asOptionalRecord(discord.accounts[accountId])?.voice,
+            `channels.discord.accounts.${accountId}.voice`,
+            writeScalar,
+            writeSetting,
+          );
+        }
+      }
+    }
+  }
+
+  return { changed: changed.length > 0, paths: changed.sort((left, right) => left.localeCompare(right)) };
+}
+
+function rewriteAgentModelReferences(
+  agent: Record<string, unknown>,
+  basePath: string,
+  includeEntrySelectors: boolean,
+  writeScalar: (container: unknown, field: string, basePath: string) => void,
+  writeSetting: (container: unknown, field: string, basePath: string) => void,
+): void {
+  writeSetting(agent, "model", basePath);
+  writeScalar(agent, "utilityModel", basePath);
+  writeScalar(agent, "decisionModel", basePath);
+  writeSetting(agent, "imageModel", basePath);
+  writeSetting(agent, "voiceModel", basePath);
+  writeSetting(agent, "pdfModel", basePath);
+
+  const mediaModels = asOptionalRecord(agent.mediaModels);
+  if (mediaModels) {
+    for (const capability of ["image", "video", "music"] as const) {
+      writeSetting(mediaModels, capability, `${basePath}.mediaModels`);
+    }
+  }
+
+  const cyberFailover = asOptionalRecord(asOptionalRecord(agent.embeddedAgent)?.cyberFailover);
+  if (cyberFailover) writeSetting(cyberFailover, "model", `${basePath}.embeddedAgent.cyberFailover`);
+
+  writeSetting(asOptionalRecord(agent.heartbeat), "model", `${basePath}.heartbeat`);
+  writeSetting(asOptionalRecord(agent.subagents), "model", `${basePath}.subagents`);
+
+  const compaction = asOptionalRecord(agent.compaction);
+  if (compaction) {
+    writeSetting(compaction, "model", `${basePath}.compaction`);
+    writeSetting(asOptionalRecord(compaction.memoryFlush), "model", `${basePath}.compaction.memoryFlush`);
+  }
+
+  if (!includeEntrySelectors) return;
+  const exec = asOptionalRecord(asOptionalRecord(agent.tools)?.exec);
+  writeSetting(asOptionalRecord(exec?.reviewer), "model", `${basePath}.tools.exec.reviewer`);
+  writeSetting(asOptionalRecord(agent.tts), "summaryModel", `${basePath}.tts`);
+}
+
+function rewriteDiscordVoiceModelReferences(
+  voice: unknown,
+  basePath: string,
+  writeScalar: (container: unknown, field: string, basePath: string) => void,
+  writeSetting: (container: unknown, field: string, basePath: string) => void,
+): void {
+  const voiceConfig = asOptionalRecord(voice);
+  if (!voiceConfig) return;
+  writeSetting(voiceConfig, "model", basePath);
+  writeSetting(asOptionalRecord(voiceConfig.tts), "summaryModel", `${basePath}.tts`);
+}
+
 function visitAgentModelReferences(
   path: string,
   agent: Record<string, unknown>,
@@ -726,6 +917,84 @@ export function applyModelReferenceProtection({
   }
 
   return { models, protectedModels };
+}
+
+/**
+ * Finds removal candidates that only differ from a surviving model by letter
+ * case.
+ *
+ * A provider list can hold both `auto/MiniMax-M3` and `auto/minimax-m3`. The
+ * filter keeps one of them and drops the other, so the two entries point at
+ * the same remote model and the deletion plan can say so instead of leaving
+ * the user with two look-alike ids.
+ */
+export function collectCaseVariantRelations(
+  removedIds: readonly string[],
+  survivingIds: readonly string[],
+): { removedId: string; survivingModelId: string }[] {
+  const byLowerId = new Map<string, string[]>();
+  for (const id of survivingIds) {
+    const key = id.toLowerCase();
+    const bucket = byLowerId.get(key);
+    if (bucket) bucket.push(id);
+    else byLowerId.set(key, [id]);
+  }
+
+  const relations: { removedId: string; survivingModelId: string }[] = [];
+  for (const removedId of removedIds) {
+    const bucket = byLowerId.get(removedId.toLowerCase());
+    if (!bucket) continue;
+    const match = bucket.find((id) => id !== removedId);
+    if (!match) continue;
+    relations.push({ removedId, survivingModelId: match });
+  }
+  return relations.sort((left, right) => left.removedId.localeCompare(right.removedId));
+}
+
+/**
+ * The model OpenClaw falls back to when an agent has no explicit selection.
+ *
+ * Agents can override the default, so the first agent that names a primary
+ * model wins. The value is the bare `provider/model` reference.
+ */
+export function resolveDefaultModelRef(config: unknown): string | undefined {
+  if (!isRecord(config)) return undefined;
+  const agents = isRecord(config.agents) ? config.agents : undefined;
+  if (!agents) return undefined;
+
+  const readPrimary = (agent: unknown): string | undefined => {
+    if (!isRecord(agent)) return undefined;
+    const model = agent.model;
+    if (typeof model === "string") {
+      const trimmed = model.trim();
+      return trimmed ? trimmed : undefined;
+    }
+    if (!isRecord(model)) return undefined;
+    const primary = model.primary;
+    if (typeof primary !== "string") return undefined;
+    const trimmed = primary.trim();
+    return trimmed ? trimmed : undefined;
+  };
+
+  const defaults = asOptionalRecord(agents.defaults);
+  const defaultPrimary = readPrimary(defaults);
+  if (defaultPrimary) return defaultPrimary;
+
+  if (isRecord(agents.entries)) {
+    for (const agentId of Object.keys(agents.entries).sort((left, right) =>
+      left.localeCompare(right),
+    )) {
+      const primary = readPrimary(agents.entries[agentId]);
+      if (primary) return primary;
+    }
+  }
+  if (Array.isArray(agents.list)) {
+    for (const entry of agents.list) {
+      const primary = readPrimary(entry);
+      if (primary) return primary;
+    }
+  }
+  return undefined;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {

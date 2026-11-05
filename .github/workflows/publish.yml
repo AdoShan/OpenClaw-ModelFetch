@@ -91,29 +91,28 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.6
+            # Model Fetch v0.2.7
 
-            This release repairs the filter strategy editor, restores the sidebar pin entry, and makes Model Fetch visible in the OpenClaw Android and iOS apps.
+            This release lets a protected model be deleted by rewriting the references that keep it alive, and explains removals that only differ from a surviving model by letter case.
 
             ## Fixes
 
-            - **Filter strategies can be saved again.** After the OpenClaw upgrade the regular expression fields only committed on blur, so the save button stayed disabled and clicking it could never commit the pending edit. The fields now update the strategy as you type, and the save button enables without needing to leave the field first.
-            - **Model Fetch is listed in the sidebar pin editor.** The navigation entry declares `defaultVisible: false` so OpenClaw offers it under "Edit pinned items" instead of hard-coding it into the sidebar, and a one-time migration restores the previous pinned state on the first activation after the upgrade.
-            - **Model Fetch is visible in the Android and iOS apps.** The plugin now registers a `surface: "tab"` control UI descriptor, so the Gateway advertises it in the `controlUiTabs` payload of the hello message that the mobile apps read.
+            - **Protected models can now be deleted.** A model that other configuration still references was kept in the list with no way to remove it. Every protected model now carries a "Replace references with" dropdown in the delete confirmation, defaulting to "Default model" (the agent's configured `model.primary`). Choosing a target rewrites the matching references in `openclaw.json` and recomputes the final model list, so the model is really dropped. "Keep this model" stays available to leave the model in place.
+            - **Case-only duplicates are explained.** A provider list can hold both `auto/MiniMax-M3` and `auto/minimax-m3`. When the removed entry only differs from a surviving entry by letter case, the delete confirmation now says so instead of leaving two look-alike ids unexplained.
 
             ## Compatibility
 
             - No configuration migration is required.
-            - Hosts that do not support control UI descriptors are left untouched; the browser sidebar entry keeps working.
+            - A rewrite that points at another provider, or at a model the same plan removes, is rejected and nothing is written.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 85 tests passed.
+            - `npm test` — 102 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.5...v0.2.6
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.6...v0.2.7
           draft: true
           generate_release_notes: false
 
@@ -130,29 +129,28 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.6
+            # Model Fetch v0.2.7
 
-            This release repairs the filter strategy editor, restores the sidebar pin entry, and makes Model Fetch visible in the OpenClaw Android and iOS apps.
+            This release lets a protected model be deleted by rewriting the references that keep it alive, and explains removals that only differ from a surviving model by letter case.
 
             ## Fixes
 
-            - **Filter strategies can be saved again.** After the OpenClaw upgrade the regular expression fields only committed on blur, so the save button stayed disabled and clicking it could never commit the pending edit. The fields now update the strategy as you type, and the save button enables without needing to leave the field first.
-            - **Model Fetch is listed in the sidebar pin editor.** The navigation entry declares `defaultVisible: false` so OpenClaw offers it under "Edit pinned items" instead of hard-coding it into the sidebar, and a one-time migration restores the previous pinned state on the first activation after the upgrade.
-            - **Model Fetch is visible in the Android and iOS apps.** The plugin now registers a `surface: "tab"` control UI descriptor, so the Gateway advertises it in the `controlUiTabs` payload of the hello message that the mobile apps read.
+            - **Protected models can now be deleted.** A model that other configuration still references was kept in the list with no way to remove it. Every protected model now carries a "Replace references with" dropdown in the delete confirmation, defaulting to "Default model" (the agent's configured `model.primary`). Choosing a target rewrites the matching references in `openclaw.json` and recomputes the final model list, so the model is really dropped. "Keep this model" stays available to leave the model in place.
+            - **Case-only duplicates are explained.** A provider list can hold both `auto/MiniMax-M3` and `auto/minimax-m3`. When the removed entry only differs from a surviving entry by letter case, the delete confirmation now says so instead of leaving two look-alike ids unexplained.
 
             ## Compatibility
 
             - No configuration migration is required.
-            - Hosts that do not support control UI descriptors are left untouched; the browser sidebar entry keeps working.
+            - A rewrite that points at another provider, or at a model the same plan removes, is rejected and nothing is written.
             - Requires OpenClaw `2026.10.5` or newer.
 
             ## Verification
 
-            - `npm test` — 85 tests passed.
+            - `npm test` — 102 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.5...v0.2.6
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.6...v0.2.7
           generate_release_notes: false
           draft: false
           make_latest: true

@@ -111,6 +111,37 @@ export const protectedModelSchema = Type.Object(
 
 export type ProtectedModel = Static<typeof protectedModelSchema>;
 
+/**
+ * A removal candidate that only differs from a surviving model by letter case.
+ */
+export const caseVariantSchema = Type.Object(
+  {
+    removedId: Type.String({ minLength: 1, maxLength: 512 }),
+    survivingModelId: Type.String({ minLength: 1, maxLength: 512 }),
+  },
+  { additionalProperties: false },
+);
+
+export type CaseVariant = Static<typeof caseVariantSchema>;
+
+/**
+ * The replacement a protected model's references are rewritten to.
+ *
+ * `targetRef` is the full `provider/model` reference written into the config.
+ * `useDefaultModel` marks the case where the target is the agent default
+ * model, which the UI shows without naming a concrete provider model.
+ */
+export const referenceRewriteSchema = Type.Object(
+  {
+    protectedModelId: Type.String({ minLength: 1, maxLength: 512 }),
+    targetRef: Type.String({ minLength: 1, maxLength: 1_024 }),
+    useDefaultModel: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export type ReferenceRewrite = Static<typeof referenceRewriteSchema>;
+
 export const modelFetchResultSchema = Type.Object(
   {
     provider: providerIdSchema,
@@ -252,6 +283,8 @@ export const applyPlanSchema = Type.Object(
     addedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     removedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     protectedModels: Type.Array(protectedModelSchema, { maxItems: 2_000 }),
+    caseVariants: Type.Array(caseVariantSchema, { maxItems: 2_000 }),
+    defaultModelRef: Type.Optional(Type.String({ maxLength: 1_024 })),
     selectedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     unchangedCount: Type.Integer({ minimum: 0 }),
     affectedSessions: Type.Array(affectedSessionSchema, { maxItems: 2_000 }),
@@ -277,6 +310,9 @@ export const applyStrategyInputSchema = Type.Object(
     provider: providerIdSchema,
     fingerprint: Type.String({ minLength: 64, maxLength: 64 }),
     expectedRemovals: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
+    referenceRewrites: Type.Optional(
+      Type.Array(referenceRewriteSchema, { maxItems: 2_000 }),
+    ),
     targetAgents: Type.Optional(
       Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
         maxItems: 256,
@@ -301,6 +337,7 @@ export const applyStrategyOutputSchema = Type.Object(
     removed: Type.Integer({ minimum: 0 }),
     selectedIds: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 2_000 }),
     protectedModels: Type.Array(protectedModelSchema, { maxItems: 2_000 }),
+    rewrittenReferences: Type.Array(Type.String({ maxLength: 1_024 }), { maxItems: 2_000 }),
     targetAgents: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
       maxItems: 256,
       uniqueItems: true,

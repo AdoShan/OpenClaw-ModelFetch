@@ -65,12 +65,18 @@ function createApi(initialConfig: Record<string, unknown>) {
     registerSessionAction,
     getConfig: () => config as {
       agents?: {
-        defaults?: { modelPolicy?: { allow?: string[] } };
+        defaults?: {
+          modelPolicy?: { allow?: string[] };
+          model?: { primary?: string; fallbacks?: string[] };
+          utilityModel?: string;
+        };
         entries?: Record<
           string,
           {
             modelPolicy?: { allow?: string[] };
             models?: Record<string, Record<string, unknown>>;
+            model?: { primary?: string; fallbacks?: string[] };
+            utilityModel?: string;
           }
         >;
       };
@@ -1259,6 +1265,203 @@ describe("Control UI operations", () => {
     expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
       "openai/gpt-4o",
       "stale/model",
+    ]);
+  });
+
+  it("rewrites a protected model's references and drops it from the list", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: {
+          model: { primary: "openrouter/openai/gpt-4o" },
+          utilityModel: "openrouter/stale/model",
+        },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [
+              model("openai/gpt-4o"),
+              model("stale/model"),
+              model("kept/model"),
+            ],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^(openai/|kept/)" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o"), model("kept/model")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.protectedModels).toEqual([
+      {
+        modelId: "stale/model",
+        ref: "openrouter/stale/model",
+        references: ["agents.defaults.utilityModel"],
+      },
+    ]);
+    expect(preview.plan.removedIds).toEqual([]);
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: preview.plan.removedIds,
+      referenceRewrites: [
+        {
+          protectedModelId: "stale/model",
+          targetRef: "openrouter/openai/gpt-4o",
+          useDefaultModel: false,
+        },
+      ],
+    });
+    expect(applied.rewrittenReferences).toEqual(["agents.defaults.utilityModel"]);
+    expect(getConfig().agents?.defaults?.utilityModel).toBe("openrouter/openai/gpt-4o");
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+      "kept/model",
+    ]);
+  });
+
+  it("refuses a rewrite that points at a model the plan also removes", async () => {
+    const { api, getConfig } = createApi({
+      agents: { defaults: { utilityModel: "openrouter/stale/model" } },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model"), model("doomed/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    await expect(
+      operations.applyStrategy({
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: preview.plan.removedIds,
+        referenceRewrites: [
+          {
+            protectedModelId: "stale/model",
+            targetRef: "openrouter/doomed/model",
+            useDefaultModel: false,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/也会被删除/);
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+      "stale/model",
+      "doomed/model",
+    ]);
+  });
+
+  it("refuses a rewrite that points outside the current provider", async () => {
+    const { api, getConfig } = createApi({
+      agents: { defaults: { utilityModel: "openrouter/stale/model" } },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    await expect(
+      operations.applyStrategy({
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: preview.plan.removedIds,
+        referenceRewrites: [
+          {
+            protectedModelId: "stale/model",
+            targetRef: "other-provider/openai/gpt-4o",
+            useDefaultModel: false,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/不属于当前 Provider/);
+    expect(getConfig().agents?.defaults?.utilityModel).toBe("openrouter/stale/model");
+  });
+
+  it("reports the default model so the UI can offer it as a rewrite target", async () => {
+    const { api } = createApi({
+      agents: {
+        defaults: { model: { primary: "openrouter/openai/gpt-4o" } },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.defaultModelRef).toBe("openrouter/openai/gpt-4o");
+  });
+
+  it("reports a removal that only differs from a protected model by letter case", async () => {
+    const { api } = createApi({
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("MiniMax-M3"), model("minimax-m3")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^minimax-m3$" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("minimax-m3")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.protectedModels).toEqual([]);
+    expect(preview.plan.removedIds).toEqual(["MiniMax-M3"]);
+    expect(preview.plan.caseVariants).toEqual([
+      { removedId: "MiniMax-M3", survivingModelId: "minimax-m3" },
     ]);
   });
 

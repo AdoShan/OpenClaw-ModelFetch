@@ -88,6 +88,7 @@ function applyPlan(overrides: Partial<ApplyPlanWithSessions> = {}): ApplyPlanWit
     addedIds: [],
     removedIds: ["stale/model"],
     protectedModels: [],
+    caseVariants: [],
     selectedIds: openRouterModels.map((model) => model.id),
     unchangedCount: 1,
     affectedSessions: [],
@@ -582,6 +583,149 @@ describe("Model Fetch settings view", () => {
     expect(referenceNote.textContent).toContain("hooks.gmail.model");
     expect(modelBadge(harness, "stale/model")?.textContent).toBe("引用保护");
     expect(modelBadge(harness, "stale/model")?.title).toContain("hooks.gmail.model");
+  });
+
+  it("offers a rewrite dropdown for each protected model, defaulting to the default model", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          protectedModels: [
+            {
+              modelId: "stale/model",
+              ref: "openrouter/stale/model",
+              references: ["agents.defaults.utilityModel"],
+            },
+          ],
+          defaultModelRef: "openrouter/openai/gpt-4o",
+        }),
+        models: openRouterModels,
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const select = harness.container.querySelector<HTMLSelectElement>(
+      ".mf-reference-select",
+    )!;
+    expect(select).not.toBeNull();
+    const options = [...select.options].map((option) => ({
+      value: option.value,
+      text: option.textContent,
+      selected: option.selected,
+    }));
+    expect(options.map((option) => option.text)).toEqual([
+      "默认模型",
+      "openai/gpt-4o",
+      "anthropic/claude",
+      "openai/text-embedding",
+      "保留该模型",
+    ]);
+    expect(options.find((option) => option.text === "默认模型")?.selected).toBe(true);
+    expect(options.find((option) => option.text === "保留该模型")?.selected).toBe(false);
+  });
+
+  it("sends the chosen rewrite target with the apply call", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          protectedModels: [
+            {
+              modelId: "stale/model",
+              ref: "openrouter/stale/model",
+              references: ["agents.defaults.utilityModel"],
+            },
+          ],
+          defaultModelRef: "openrouter/openai/gpt-4o",
+        }),
+        models: openRouterModels,
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const select = harness.container.querySelector<HTMLSelectElement>(
+      ".mf-reference-select",
+    )!;
+    const anthropic = [...select.options].find(
+      (option) => option.textContent === "anthropic/claude",
+    )!;
+    anthropic.selected = true;
+    Object.defineProperty(select, "value", {
+      configurable: true,
+      value: "openrouter/anthropic/claude",
+    });
+    select.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
+
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() =>
+      expect(
+        harness.requests.some((request) => request.actionId === "strategy.apply"),
+      ).toBe(true),
+    );
+    const apply = harness.requests.find(
+      (request) => request.actionId === "strategy.apply",
+    )!;
+    expect((apply.payload as { referenceRewrites?: unknown }).referenceRewrites).toEqual([
+      {
+        protectedModelId: "stale/model",
+        targetRef: "openrouter/anthropic/claude",
+        useDefaultModel: false,
+      },
+    ]);
+  });
+
+  it("explains a removal that only differs from a surviving model by letter case", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          removedIds: ["stale/model"],
+          caseVariants: [
+            { removedId: "stale/model", survivingModelId: "Stale/Model" },
+          ],
+        }),
+        models: openRouterModels,
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const note = harness.container.querySelector<HTMLElement>(
+      ".mf-delete-item__note",
+    )!;
+    expect(note.textContent).toBe("与 Stale/Model 是同一个模型，仅大小写不同。");
   });
 
   it("lists the affected sessions in the delete confirmation", async () => {

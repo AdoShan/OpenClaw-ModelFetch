@@ -14,13 +14,16 @@ import {
 import { modelFetchContract } from "./contract.js";
 import {
   applyModelReferenceProtection,
+  collectCaseVariantRelations,
   collectModelReferenceUsages,
   fetchProviderModels,
   getProvider,
   mergeModels,
+  resolveDefaultModelRef,
   resolveApiKey,
   resolveProviderFilter,
   resolveProviderTargetAgents,
+  rewriteModelReferences,
   runModelFetch,
   selectFetchedModels,
   syncAgentModelEntries,
@@ -36,6 +39,7 @@ import type {
   AgentSummary,
   ApplyStrategyInput,
   ApplyStrategyOutput,
+  CaseVariant,
   FetchModelsOutput,
   ListProvidersOutput,
   ModelFetchParams,
@@ -43,6 +47,7 @@ import type {
   PreviewApplyOutput,
   ProviderSummary,
   ProtectedModel,
+  ReferenceRewrite,
   SaveStrategyInput,
   SaveStrategyOutput,
 } from "./schemas.js";
@@ -79,9 +84,13 @@ type ComputedPlan = {
   selectedIds: string[];
   unchangedCount: number;
   protectedModels: ProtectedModel[];
+  caseVariants: CaseVariant[];
+  defaultModelRef?: string;
   models: ModelView[];
   fingerprint: string;
   finalModels: ModelDefinitionLike[];
+  existingModels: ModelDefinitionLike[];
+  mergedModels: ModelDefinitionLike[];
 };
 
 /**
@@ -188,6 +197,72 @@ function normalizeTargetAgents(targetAgents: readonly string[] | undefined): str
 
 function configPath(providerId: string): string {
   return `models.providers.${providerId}.models`;
+}
+
+type NormalizedRewrite = {
+  protectedModelId: string;
+  fromRef: string;
+  toRef: string;
+};
+
+/**
+ * Validates the requested reference rewrites against the plan.
+ *
+ * A rewrite may only retarget a model that the plan protects, and it may only
+ * point at a model that survives the replacement. Rewriting to a model that is
+ * itself removed would leave the config with a dangling reference, so the
+ * whole plan is rejected instead.
+ */
+function normalizeReferenceRewrites(
+  requested: readonly ReferenceRewrite[] | undefined,
+  computed: ComputedPlan,
+): NormalizedRewrite[] {
+  if (!requested || requested.length === 0) return [];
+
+  const protectedIds = new Set(
+    computed.protectedModels.map((entry) => entry.modelId),
+  );
+  const survivingIds = new Set(computed.finalModels.map((model) => model.id));
+  const removedIds = new Set(computed.removedIds);
+  const providerPrefix = `${computed.providerId}/`;
+
+  const result: NormalizedRewrite[] = [];
+  const seen = new Set<string>();
+  for (const entry of requested) {
+    const protectedModelId = entry.protectedModelId.trim();
+    if (!protectedIds.has(protectedModelId)) {
+      throw new Error(
+        `引用改写目标 ${protectedModelId} 不在本次保留列表中，已取消写入。请重新预览。`,
+      );
+    }
+    if (seen.has(protectedModelId)) continue;
+
+    const targetRef = entry.targetRef.trim();
+    if (!targetRef.startsWith(providerPrefix)) {
+      throw new Error(
+        `引用改写目标 ${targetRef} 不属于当前 Provider，已取消写入。请重新预览。`,
+      );
+    }
+    const targetId = targetRef.slice(providerPrefix.length);
+    if (!targetId) {
+      throw new Error(
+        `引用改写目标 ${targetRef} 无效，已取消写入。请重新预览。`,
+      );
+    }
+    if (removedIds.has(targetId) || !survivingIds.has(targetId)) {
+      throw new Error(
+        `引用改写目标 ${targetRef} 也会被删除，已取消写入。请重新预览。`,
+      );
+    }
+
+    seen.add(protectedModelId);
+    result.push({
+      protectedModelId,
+      fromRef: `${computed.providerId}/${protectedModelId}`,
+      toRef: targetRef,
+    });
+  }
+  return result;
 }
 
 function planFingerprint(input: {
@@ -610,6 +685,12 @@ export function createModelFetchOperations({
       protectedModels: protection.protectedModels,
     });
 
+    const caseVariants = collectCaseVariantRelations(
+      removedIds,
+      protection.models.map((model) => model.id),
+    );
+    const defaultModelRef = resolveDefaultModelRef(config);
+
     return {
       providerId,
       provider,
@@ -622,9 +703,13 @@ export function createModelFetchOperations({
       selectedIds: merge.selectedIds,
       unchangedCount: merge.unchanged,
       protectedModels: protection.protectedModels,
+      caseVariants,
+      defaultModelRef,
       models,
       fingerprint,
       finalModels: protection.models,
+      existingModels: existing,
+      mergedModels: merge.models,
     };
   }
 
@@ -724,6 +809,8 @@ export function createModelFetchOperations({
       addedIds: computed.addedIds,
       removedIds: computed.removedIds,
       protectedModels: computed.protectedModels,
+      caseVariants: computed.caseVariants,
+      defaultModelRef: computed.defaultModelRef,
       selectedIds: computed.selectedIds,
       unchangedCount: computed.unchangedCount,
       affectedSessions,
@@ -740,6 +827,7 @@ export function createModelFetchOperations({
       provider,
       fingerprint,
       expectedRemovals,
+      referenceRewrites,
       targetAgents,
     }: ApplyStrategyInput,
     scope: SessionSelectionScope = {},
@@ -752,10 +840,16 @@ export function createModelFetchOperations({
       throw new Error("待删除模型与确认列表不一致，已取消写入。请重新预览。");
     }
 
+    const rewrites = normalizeReferenceRewrites(
+      referenceRewrites,
+      computed,
+    );
+
     const nextTargetAgents = normalizeTargetAgents(
       targetAgents ?? savedTargetAgents(provider),
     );
     let syncedAgents: string[] = [];
+    const rewrittenReferences: string[] = [];
 
     const result = await mutateConfigFileWithRetry(runtime, {
       base: "source",
@@ -776,13 +870,35 @@ export function createModelFetchOperations({
         if (referenceProtectionDrift(config, provider, computed)) {
           throw new Error("模型引用在确认后发生变化，已取消写入。请重新预览。");
         }
-        target.models = computed.finalModels;
+
+        for (const rewrite of rewrites) {
+          const result = rewriteModelReferences(
+            config,
+            rewrite.fromRef,
+            rewrite.toRef,
+          );
+          if (result.changed) rewrittenReferences.push(...result.paths);
+        }
+
+        // The rewrites may have released the references that kept a model in
+        // the list, so the final list is recomputed against the rewritten
+        // draft instead of reusing the previewed one.
+        const finalModels = rewrites.length > 0
+          ? applyModelReferenceProtection({
+              existing: computed.existingModels,
+              merged: computed.mergedModels,
+              providerId: provider,
+              config,
+            }).models
+          : computed.finalModels;
+
+        target.models = finalModels;
         ensurePluginEntry(config, provider, computed.filter, nextTargetAgents);
-        const syncResult = syncConfiguredModelPolicyAllow(config, provider, computed.finalModels, {
+        const syncResult = syncConfiguredModelPolicyAllow(config, provider, finalModels, {
           targetAgents: nextTargetAgents,
         });
         syncedAgents = syncResult.syncedAgents;
-        syncAgentModelEntries(config, provider, computed.finalModels, {
+        syncAgentModelEntries(config, provider, finalModels, {
           targetAgents: syncedAgents,
         });
       },
@@ -816,6 +932,7 @@ export function createModelFetchOperations({
       removed: computed.removedIds.length,
       selectedIds: computed.selectedIds,
       protectedModels: computed.protectedModels,
+      rewrittenReferences,
       targetAgents: nextTargetAgents,
       syncedAgents,
       sessionSelectionResets: resetSessionKeys.length,
