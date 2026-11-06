@@ -22,6 +22,7 @@ export const MODEL_FETCH_TOOL_NAME = "model_fetch";
 const CONFIG_PATH = "models.providers.<providerId>.models";
 const RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_MODEL_PAGES = 100;
 
 export {
   modelFetchConfigSchema,
@@ -60,20 +61,13 @@ export type ProviderLike = {
 type ConfigLike = {
   agents?: {
     defaults?: {
+      models?: Record<string, Record<string, unknown> | undefined>;
       modelPolicy?: {
         allow?: unknown;
       };
     };
-    entries?: Record<
-      string,
-      | {
-          modelPolicy?: {
-            allow?: unknown;
-          };
-          models?: Record<string, Record<string, unknown> | undefined>;
-        }
-      | undefined
-    >;
+    entries?: Record<string, AgentConfigEntryLike | undefined>;
+    list?: (AgentConfigEntryLike & { id?: string })[];
   };
   models?: {
     providers?: Record<string, ProviderLike | undefined>;
@@ -87,6 +81,14 @@ type ConfigLike = {
       | undefined
     >;
   };
+};
+
+export type AgentConfigEntryLike = {
+  modelPolicy?: {
+    allow?: unknown;
+  };
+  models?: Record<string, Record<string, unknown> | undefined>;
+  [key: string]: unknown;
 };
 
 export type AllowlistSyncResult = {
@@ -211,31 +213,24 @@ export function syncConfiguredModelPolicyAllow(
     defaultsUpdated = true;
   }
 
-  const agentEntries = cfg.agents?.entries;
-  if (!agentEntries) {
-    return { defaultsUpdated, syncedAgents: [] };
-  }
-
   const selectedAgents = normalizeAgentIds(options.targetAgents);
   const forcedAgentSet = selectedAgents.length > 0 ? new Set(selectedAgents) : null;
   const syncedAgents: string[] = [];
-  for (const [agentId, entry] of Object.entries(agentEntries)) {
+  for (const { id: agentId, entry } of listConfiguredAgentEntries(cfg)) {
     if (!entry?.modelPolicy) continue;
     const normalized = normalizeAllowList(entry.modelPolicy.allow);
     const shouldSync =
-      forcedAgentSet?.has(agentId) ?? hasProviderScopedRule(normalized, providerId);
+      forcedAgentSet?.has(agentId) === true ||
+      hasProviderScopedRule(normalized, providerId);
     if (!shouldSync) continue;
 
     const result = reconcileModelRefs(entry.modelPolicy.allow, providerId, modelRefs);
     const selectedWithAllowlist =
       forcedAgentSet?.has(agentId) === true && normalized.length > 0;
     if (result.changed) {
-      agentEntries[agentId] = {
-        ...entry,
-        modelPolicy: {
-          ...entry.modelPolicy,
-          allow: result.next,
-        },
+      entry.modelPolicy = {
+        ...entry.modelPolicy,
+        allow: result.next,
       };
     }
     if (result.changed || selectedWithAllowlist) {
@@ -260,12 +255,12 @@ export function syncAgentModelEntries(
   const selectedAgents = normalizeAgentIds(options.targetAgents);
   if (selectedAgents.length === 0) return { syncedAgents: [] };
 
-  const agentEntries = cfg.agents?.entries;
-  if (!agentEntries) return { syncedAgents: [] };
-
+  const agentEntries = new Map(
+    listConfiguredAgentEntries(cfg).map(({ id, entry }) => [id, entry]),
+  );
   const syncedAgents: string[] = [];
   for (const agentId of selectedAgents) {
-    const entry = agentEntries[agentId];
+    const entry = agentEntries.get(agentId);
     if (!entry) continue;
     const selectedRefs = new Set(modelRefs);
     const providerPrefix = `${providerId}/`;
@@ -284,10 +279,7 @@ export function syncAgentModelEntries(
       changed = true;
     }
     if (!changed) continue;
-    agentEntries[agentId] = {
-      ...entry,
-      models: modelsConfig,
-    };
+    entry.models = modelsConfig;
     syncedAgents.push(agentId);
   }
 
@@ -296,6 +288,94 @@ export function syncAgentModelEntries(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function listConfiguredAgentEntries(
+  config: unknown,
+): { id: string; entry: AgentConfigEntryLike }[] {
+  const cfg = config as ConfigLike | undefined;
+  const agents = cfg?.agents;
+  if (!agents) return [];
+
+  if (isRecord(agents.entries)) {
+    const entries = Object.entries(agents.entries)
+      .filter(([id, entry]) => id.trim().length > 0 && isRecord(entry))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, entry]) => ({ id, entry: entry as AgentConfigEntryLike }));
+    if (entries.length > 0 || !Array.isArray(agents.list)) return entries;
+  }
+
+  if (!Array.isArray(agents.list)) return [];
+  const entries: { id: string; entry: AgentConfigEntryLike }[] = [];
+  for (const entry of agents.list) {
+    if (!isRecord(entry)) continue;
+    const id = typeof entry.id === "string" ? entry.id.trim() : "";
+    if (!id) continue;
+    entries.push({ id, entry: entry as AgentConfigEntryLike });
+  }
+  return entries.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function collectModelAliases(
+  config: unknown,
+  agentId?: string,
+): Map<string, string> {
+  const aliases = new Map<string, string>();
+
+  const addModels = (models: unknown): void => {
+    if (!isRecord(models)) return;
+    for (const [rawRef, value] of Object.entries(models)) {
+      if (!isRecord(value) || typeof value.alias !== "string") continue;
+      const alias = value.alias.trim().toLowerCase();
+      const modelRef = rawRef.trim();
+      if (!alias || !modelRef || modelRef.endsWith("/*")) continue;
+      aliases.set(alias, modelRef);
+
+      const provider = modelRef.split("/", 1)[0]?.trim();
+      if (provider) {
+        aliases.set(`${provider}/${alias}`.toLowerCase(), modelRef);
+      }
+    }
+  };
+
+  const cfg = config as ConfigLike | undefined;
+  addModels(cfg?.agents?.defaults?.models);
+  const normalizedAgentId = agentId?.trim().toLowerCase();
+  if (normalizedAgentId) {
+    const agent = listConfiguredAgentEntries(cfg).find(
+      ({ id }) => id.toLowerCase() === normalizedAgentId,
+    );
+    addModels(agent?.entry.models);
+  }
+  return aliases;
+}
+
+function agentIdForReferencePath(
+  config: unknown,
+  path: string,
+): string | undefined {
+  const cfg = config as ConfigLike | undefined;
+  const agents = cfg?.agents;
+  if (!agents) return undefined;
+
+  if (isRecord(agents.entries)) {
+    const prefix = "agents.entries.";
+    if (path.startsWith(prefix)) {
+      return Object.keys(agents.entries)
+        .filter((id) => path.startsWith(`${prefix}${id}.`))
+        .sort((left, right) => right.length - left.length)[0];
+    }
+  }
+
+  if (Array.isArray(agents.list)) {
+    const match = /^agents\.list\[(\d+)\]\./.exec(path);
+    if (!match) return undefined;
+    const entry = agents.list[Number(match[1])];
+    return isRecord(entry) && typeof entry.id === "string"
+      ? entry.id.trim() || undefined
+      : undefined;
+  }
+  return undefined;
 }
 
 function parseFilter(value: unknown): ModelFilterConfig {
@@ -526,6 +606,17 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
           visit,
         );
       }
+      if (Array.isArray(tools.media.models)) {
+        tools.media.models.forEach((entry, index) => {
+          if (!isRecord(entry)) return;
+          const provider =
+            typeof entry.provider === "string" ? entry.provider.trim() : "";
+          const model = typeof entry.model === "string" ? entry.model.trim() : "";
+          if (provider && model) {
+            visit(`${provider}/${model}`, `tools.media.models[${index}].model`);
+          }
+        });
+      }
     }
   }
 
@@ -649,6 +740,22 @@ export function rewriteModelReferences(
     });
   };
 
+  const writeProviderModel = (
+    container: unknown,
+    basePath: string,
+  ): void => {
+    if (!isRecord(container)) return;
+    const provider =
+      typeof container.provider === "string" ? container.provider.trim() : "";
+    const model = typeof container.model === "string" ? container.model.trim() : "";
+    if (!provider || !model || `${provider}/${model}` !== source) return;
+    const separator = target.indexOf("/");
+    if (separator <= 0 || separator === target.length - 1) return;
+    container.provider = target.slice(0, separator);
+    container.model = target.slice(separator + 1);
+    changed.push(`${basePath}.model`);
+  };
+
   const tools = isRecord(draft.tools) ? draft.tools : undefined;
   if (tools) {
     const exec = asOptionalRecord(tools.exec);
@@ -660,6 +767,12 @@ export function rewriteModelReferences(
         const media = asOptionalRecord(tools.media[capability]);
         if (!media) continue;
         writeScalar(media, "preferredModel", `tools.media.${capability}`);
+      }
+      if (Array.isArray(tools.media.models)) {
+        tools.media.models.forEach((entry, index) => {
+          if (!isRecord(entry)) return;
+          writeProviderModel(entry, `tools.media.models[${index}]`);
+        });
       }
     }
   }
@@ -806,7 +919,10 @@ type ModelRefPair = { fromRef: string; toRef: string };
 export function migrateModelRefEntries(
   draft: unknown,
   pairs: readonly ModelRefPair[],
-  options: { targetAgents?: readonly string[] } = {},
+  options: {
+    targetAgents?: readonly string[];
+    onAliasConflict?: "keep-target" | "error";
+  } = {},
 ): { changed: boolean; paths: string[] } {
   const replacements = new Map<string, string>();
   for (const pair of pairs) {
@@ -825,6 +941,24 @@ export function migrateModelRefEntries(
       if (!Object.prototype.hasOwnProperty.call(container, from)) continue;
       const moved = container[from];
       const existing = container[to];
+      const movedAlias =
+        isRecord(moved) && typeof moved.alias === "string"
+          ? moved.alias.trim()
+          : "";
+      const existingAlias =
+        isRecord(existing) && typeof existing.alias === "string"
+          ? existing.alias.trim()
+          : "";
+      if (
+        options.onAliasConflict === "error" &&
+        movedAlias &&
+        existingAlias &&
+        movedAlias !== existingAlias
+      ) {
+        throw new Error(
+          `Cannot move model entry ${from} to ${to}: both models define different aliases. Keep ${from} or choose another rewrite target.`,
+        );
+      }
       // The surviving spelling wins on conflict so an alias already set for it
       // is not overwritten by the stale one.
       container[to] =
@@ -988,7 +1122,8 @@ export function collectModelReferenceUsages(
   if (targets.size === 0) return [];
 
   forEachExplicitModelReference(config, (ref, path) => {
-    const usage = targets.get(ref);
+    const aliases = collectModelAliases(config, agentIdForReferencePath(config, path));
+    const usage = targets.get(ref) ?? targets.get(aliases.get(ref.toLowerCase()) ?? "");
     if (!usage) return;
     if (!usage.references.includes(path)) usage.references.push(path);
   });
@@ -1098,20 +1233,24 @@ export function resolveDefaultModelRef(config: unknown): string | undefined {
 
   const defaults = asOptionalRecord(agents.defaults);
   const defaultPrimary = readPrimary(defaults);
-  if (defaultPrimary) return defaultPrimary;
+  const resolveAlias = (ref: string, agentId?: string): string =>
+    collectModelAliases(config, agentId).get(ref.toLowerCase()) ?? ref;
+  if (defaultPrimary) return resolveAlias(defaultPrimary);
 
   if (isRecord(agents.entries)) {
     for (const agentId of Object.keys(agents.entries).sort((left, right) =>
       left.localeCompare(right),
     )) {
       const primary = readPrimary(agents.entries[agentId]);
-      if (primary) return primary;
+      if (primary) return resolveAlias(primary, agentId);
     }
   }
   if (Array.isArray(agents.list)) {
     for (const entry of agents.list) {
       const primary = readPrimary(entry);
-      if (primary) return primary;
+      const agentId =
+        isRecord(entry) && typeof entry.id === "string" ? entry.id : undefined;
+      if (primary) return resolveAlias(primary, agentId);
     }
   }
   return undefined;
@@ -1123,6 +1262,12 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function joinUrl(baseUrl: string, path: string): string {
   return `${normalizeBaseUrl(baseUrl)}${path}`;
+}
+
+function withQueryParam(url: string, name: string, value: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.set(name, value);
+  return parsed.toString();
 }
 
 export function buildModelsEndpoint(providerId: string, provider: ProviderLike): string {
@@ -1138,13 +1283,6 @@ export function buildModelsEndpoint(providerId: string, provider: ProviderLike):
     return joinUrl(/\/v1$/i.test(base) ? base : `${base}/v1`, "/models");
   }
 
-  const isOpenRouter =
-    providerId.toLowerCase() === "openrouter" ||
-    base.toLowerCase().endsWith("openrouter.ai/api/v1");
-  if (isOpenRouter) {
-    return joinUrl(base.endsWith("/api/v1") ? base : "https://openrouter.ai/api/v1", "/models");
-  }
-
   return joinUrl(base.replace(/\/models$/i, ""), "/models");
 }
 
@@ -1154,16 +1292,135 @@ function readNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function readNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function readStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+}
+
 function readContextWindow(row: Record<string, unknown>): number | undefined {
   const direct =
     readNumber(row.context_window) ??
     readNumber(row.contextWindow) ??
     readNumber(row.context_length) ??
-    readNumber(row.contextLength);
+    readNumber(row.contextLength) ??
+    readNumber(row.max_context_length) ??
+    readNumber(row.maxContextLength) ??
+    readNumber(row.max_model_len) ??
+    readNumber(row.context_size);
   if (direct !== undefined) return direct;
   if (isRecord(row.top_provider)) return readNumber(row.top_provider.context_length);
   if (isRecord(row.details)) return readNumber(row.details.context_length);
   return undefined;
+}
+
+function readMaxTokens(row: Record<string, unknown>): number | undefined {
+  const direct =
+    readNumber(row.max_completion_tokens) ??
+    readNumber(row.max_output_tokens) ??
+    readNumber(row.maxTokens) ??
+    readNumber(row.max_tokens);
+  if (direct !== undefined) return direct;
+  if (isRecord(row.top_provider)) {
+    return readNumber(row.top_provider.max_completion_tokens);
+  }
+  return undefined;
+}
+
+function readInputModalities(row: Record<string, unknown>): ("text" | "image")[] {
+  const architecture = asOptionalRecord(row.architecture);
+  const modalities = asOptionalRecord(row.modalities);
+  const values = new Set<string>([
+    ...readStringList(row.input),
+    ...readStringList(architecture?.input_modalities),
+    ...readStringList(architecture?.inputModalities),
+    ...readStringList(modalities?.input),
+  ]);
+  const capabilities = readStringList(row.capabilities);
+  const input: ("text" | "image")[] = ["text"];
+  if (
+    row.supports_vision === true ||
+    values.has("image") ||
+    values.has("vision") ||
+    capabilities.includes("vision") ||
+    capabilities.includes("image")
+  ) {
+    input.push("image");
+  }
+  return input;
+}
+
+function readReasoningSupport(row: Record<string, unknown>): boolean {
+  if (typeof row.reasoning === "boolean") return row.reasoning;
+  const supported = readStringList(row.supported_parameters);
+  const capabilities = readStringList(row.capabilities);
+  return (
+    supported.includes("reasoning") ||
+    supported.includes("include_reasoning") ||
+    capabilities.includes("reasoning") ||
+    capabilities.includes("thinking")
+  );
+}
+
+function readCostFields(
+  pricing: Record<string, unknown>,
+  scale: number,
+): ModelDefinitionLike["cost"] | undefined {
+  const input =
+    readNonNegativeNumber(pricing.input) ??
+    readNonNegativeNumber(pricing.prompt);
+  const output =
+    readNonNegativeNumber(pricing.output) ??
+    readNonNegativeNumber(pricing.completion);
+  const cacheRead =
+    readNonNegativeNumber(pricing.cacheRead) ??
+    readNonNegativeNumber(pricing.cache_read) ??
+    readNonNegativeNumber(pricing.input_cache_read);
+  const cacheWrite =
+    readNonNegativeNumber(pricing.cacheWrite) ??
+    readNonNegativeNumber(pricing.cache_write) ??
+    readNonNegativeNumber(pricing.input_cache_write);
+  if (
+    input === undefined &&
+    output === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    input: (input ?? 0) * scale,
+    output: (output ?? 0) * scale,
+    cacheRead: (cacheRead ?? 0) * scale,
+    cacheWrite: (cacheWrite ?? 0) * scale,
+  };
+}
+
+function readCost(row: Record<string, unknown>): ModelDefinitionLike["cost"] | undefined {
+  // OpenClaw model costs are USD per million tokens. OpenRouter-shaped model
+  // feeds publish per-token rates under `pricing`; `cost` is already normalized.
+  const normalized = asOptionalRecord(row.cost);
+  if (normalized) return readCostFields(normalized, 1);
+  const pricing = asOptionalRecord(row.pricing);
+  return pricing ? readCostFields(pricing, 1_000_000) : undefined;
 }
 
 export function mapFetchedRows(
@@ -1177,31 +1434,79 @@ export function mapFetchedRows(
 
   for (const row of rows) {
     if (!isRecord(row)) continue;
-    const rawId = isOllama ? row.name : row.id;
+    const rawId = isOllama
+      ? (readString(row.name) ?? readString(row.model) ?? row.id)
+      : (readString(row.id) ?? readString(row.model) ?? readString(row.name));
     if (typeof rawId !== "string" || !rawId.trim()) continue;
     const id = rawId.trim();
     if (seen.has(id)) continue;
     seen.add(id);
+    const displayName =
+      readString(row.display_name) ??
+      readString(row.displayName) ??
+      (!isOllama && readString(row.name) !== id ? readString(row.name) : undefined);
     const model = createDefaultModel(
       id,
-      typeof row.name === "string" && row.name.trim()
-        ? row.name
-        : typeof row.display_name === "string"
-          ? row.display_name
-          : undefined,
+      displayName,
     );
     const contextWindow = readContextWindow(row);
     if (contextWindow !== undefined) model.contextWindow = contextWindow;
+    const maxTokens = readMaxTokens(row);
+    if (maxTokens !== undefined) model.maxTokens = maxTokens;
+    model.reasoning = readReasoningSupport(row);
+    model.input = readInputModalities(row);
+    const cost = readCost(row);
+    if (cost) model.cost = cost;
     models.push(model);
   }
 
   return models;
 }
 
-function extractRows(body: unknown, provider: ProviderLike): unknown[] {
-  if (!isRecord(body)) return [];
-  if (provider.api === "ollama") return Array.isArray(body.models) ? body.models : [];
-  return Array.isArray(body.data) ? body.data : [];
+type ExtractedModelPage = {
+  rows: unknown[];
+  nextCursor?: string;
+};
+
+function extractModelPage(body: unknown, provider: ProviderLike): ExtractedModelPage {
+  if (Array.isArray(body)) return { rows: body };
+  if (!isRecord(body)) {
+    throw new Error("Model list response was not a JSON object or array.");
+  }
+
+  const rows =
+    provider.api === "ollama" && Array.isArray(body.models)
+      ? body.models
+      : Array.isArray(body.data)
+        ? body.data
+        : Array.isArray(body.models)
+          ? body.models
+          : Array.isArray(body.results)
+            ? body.results
+            : undefined;
+  if (!rows) {
+    throw new Error(
+      "Model list response did not contain a supported models array (data, models, or results).",
+    );
+  }
+
+  if (provider.api === "ollama" || body.has_more !== true) {
+    return { rows };
+  }
+
+  const pageRows = rows.filter(isRecord);
+  const lastRow = pageRows.at(-1);
+  const nextCursor =
+    readString(body.last_id) ??
+    readString(body.next_cursor) ??
+    readString(body.nextCursor) ??
+    (lastRow
+      ? (readString(lastRow.id) ?? readString(lastRow.name) ?? readString(lastRow.model))
+      : undefined);
+  if (nextCursor === undefined) {
+    throw new Error("Model list response reported more pages but did not include a cursor.");
+  }
+  return { rows, nextCursor };
 }
 
 type GuardedFetch = (params: GuardedFetchOptions) => Promise<GuardedFetchResult>;
@@ -1219,7 +1524,7 @@ export async function fetchProviderModels({
   signal?: AbortSignal;
   guardedFetch?: GuardedFetch;
 }): Promise<ModelDefinitionLike[]> {
-  const endpoint = buildModelsEndpoint(providerId, provider);
+  let endpoint = buildModelsEndpoint(providerId, provider);
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -1230,32 +1535,53 @@ export async function fetchProviderModels({
   }
   if (provider.api === "anthropic-messages") headers["anthropic-version"] = "2023-06-01";
 
-  const guarded = await guardedFetch({
-    url: endpoint,
-    init: { method: "GET", headers },
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    signal,
-    policy: ssrfPolicyFromAllowPrivateNetwork(provider.request?.allowPrivateNetwork === true),
-    auditContext: "model-fetch.models",
-  });
+  const rows: unknown[] = [];
+  const seenCursors = new Set<string>();
+  for (let page = 0; page < MAX_MODEL_PAGES; page += 1) {
+    const guarded = await guardedFetch({
+      url: endpoint,
+      init: { method: "GET", headers },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      signal,
+      policy: ssrfPolicyFromAllowPrivateNetwork(provider.request?.allowPrivateNetwork === true),
+      auditContext: "model-fetch.models",
+    });
 
-  try {
-    if (!guarded.response.ok) {
-      const buffer = await readResponseWithLimit(guarded.response, 4096, { signal });
-      const snippet = buffer.toString("utf8").slice(0, 500);
-      throw new Error(`Model list request failed with HTTP ${guarded.response.status}: ${snippet}`);
-    }
-    const buffer = await readResponseWithLimit(guarded.response, RESPONSE_LIMIT_BYTES, { signal });
-    let body: unknown;
     try {
-      body = JSON.parse(buffer.toString("utf8"));
-    } catch {
-      throw new Error("Model list response was not valid JSON.");
+      if (!guarded.response.ok) {
+        const buffer = await readResponseWithLimit(guarded.response, 4096, { signal });
+        const snippet = buffer.toString("utf8").slice(0, 500);
+        throw new Error(
+          `Model list request failed with HTTP ${guarded.response.status}: ${snippet}`,
+        );
+      }
+      const buffer = await readResponseWithLimit(guarded.response, RESPONSE_LIMIT_BYTES, {
+        signal,
+      });
+      let body: unknown;
+      try {
+        body = JSON.parse(buffer.toString("utf8"));
+      } catch {
+        throw new Error("Model list response was not valid JSON.");
+      }
+      const extracted = extractModelPage(body, provider);
+      rows.push(...extracted.rows);
+      if (extracted.nextCursor === undefined) {
+        return mapFetchedRows(providerId, provider, rows);
+      }
+      if (seenCursors.has(extracted.nextCursor)) {
+        throw new Error(
+          `Model list pagination repeated cursor "${extracted.nextCursor}".`,
+        );
+      }
+      seenCursors.add(extracted.nextCursor);
+      endpoint = withQueryParam(endpoint, "after_id", extracted.nextCursor);
+    } finally {
+      await guarded.release();
     }
-    return mapFetchedRows(providerId, provider, extractRows(body, provider));
-  } finally {
-    await guarded.release();
   }
+
+  throw new Error(`Model list exceeded the ${MAX_MODEL_PAGES}-page safety limit.`);
 }
 
 export function getProvider(config: unknown, providerId: string): ProviderLike {
@@ -1353,7 +1679,7 @@ export async function runModelFetch({
     selected,
     filter: effectiveFilter,
   });
-  const protection = applyModelReferenceProtection({
+  let protection = applyModelReferenceProtection({
     existing,
     merged: merge.models,
     providerId,
@@ -1362,6 +1688,7 @@ export async function runModelFetch({
 
   let persisted = false;
   let configPath = CONFIG_PATH;
+  let removed = Math.max(0, merge.removed - protection.protectedModels.length);
   if (!params.dryRun) {
     const runtime = (api as unknown as MutableRuntimeApi).runtime;
     const result = await runtime.config.mutateConfigFile({
@@ -1372,6 +1699,15 @@ export async function runModelFetch({
         cfg.models ??= {};
         cfg.models.providers ??= {};
         const target = cfg.models.providers[providerId] ?? { ...provider };
+        const latestExisting = target.models ?? [];
+        protection = applyModelReferenceProtection({
+          existing: latestExisting,
+          merged: merge.models,
+          providerId,
+          config: cfg,
+        });
+        const finalIds = new Set(protection.models.map((model) => model.id));
+        removed = latestExisting.filter((model) => !finalIds.has(model.id)).length;
         target.models = protection.models;
         cfg.models.providers[providerId] = target;
         const targetAgents = resolveProviderTargetAgents(providerId, cfg, factoryConfig);
@@ -1394,7 +1730,7 @@ export async function runModelFetch({
     protectedModels: protection.protectedModels,
     added: merge.added,
     unchanged: merge.unchanged,
-    removed: Math.max(0, merge.removed - protection.protectedModels.length),
+    removed,
     replace: effectiveFilter.replace === true,
     dryRun: params.dryRun === true,
     configPath,

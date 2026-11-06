@@ -65,9 +65,9 @@
     "navigation"
   ],
   "controlUi": {
-    "entry": "dist/control-ui/b32b248d77fbc02925de3596562c26e19920fe4fabbae88d261043b7d0cc2625/index.js",
+    "entry": "dist/control-ui/5e7c52c3c0fc8c04a2bffdd2a1cb8ab395800f892ba686381c4918e58bbe6736/index.js",
     "styles": [
-      "dist/control-ui/b32b248d77fbc02925de3596562c26e19920fe4fabbae88d261043b7d0cc2625/index.css"
+      "dist/control-ui/5e7c52c3c0fc8c04a2bffdd2a1cb8ab395800f892ba686381c4918e58bbe6736/index.css"
     ]
   },
   "contracts": {

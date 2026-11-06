@@ -80,6 +80,13 @@ function createApi(initialConfig: Record<string, unknown>) {
             utilityModel?: string;
           }
         >;
+        list?: {
+          id?: string;
+          modelPolicy?: { allow?: string[] };
+          models?: Record<string, Record<string, unknown>>;
+          model?: { primary?: string; fallbacks?: string[] };
+          utilityModel?: string;
+        }[];
       };
       models?: { providers?: Record<string, ProviderLike & { models?: ModelDefinitionLike[] }> };
       plugins?: { entries?: Record<string, { config?: unknown }> };
@@ -195,6 +202,32 @@ describe("Control UI operations", () => {
       "main",
     ]);
     expect(output.agents).toEqual([{ id: "main", hasModelAllowlist: true }]);
+  });
+
+  it("lists agents from the runtime list projection", async () => {
+    const { api } = createApi({
+      agents: {
+        entries: {},
+        list: [
+          {
+            id: "worker",
+            modelPolicy: { allow: ["openrouter/openai/gpt-4o"] },
+          },
+          {
+            id: "main",
+          },
+        ],
+      },
+      ...baseConfig({}),
+    });
+    const operations = createModelFetchOperations({ api });
+
+    const output = await operations.listProviders();
+
+    expect(output.agents).toEqual([
+      { id: "main", hasModelAllowlist: false },
+      { id: "worker", hasModelAllowlist: true },
+    ]);
   });
 
   it("fetches remote models without changing configuration", async () => {
@@ -981,6 +1014,62 @@ describe("Control UI operations", () => {
     });
   });
 
+  it("writes synchronized allowlists and model entries to runtime agent lists", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        entries: {},
+        list: [
+          {
+            id: "main",
+            modelPolicy: {
+              allow: ["minimax-portal/MiniMax-M2.5"],
+            },
+            models: {
+              "minimax-portal/MiniMax-M2.5": {},
+            },
+          },
+        ],
+      },
+      ...baseConfig(
+        {
+          "minimax-portal": {
+            baseUrl: "https://api.minimax.chat/v1",
+            api: "openai-responses",
+            models: [model("MiniMax-M2.5")],
+          },
+        },
+        {
+          "minimax-portal": {
+            filter: { manualIds: ["MiniMax-M3"] },
+            targetAgents: ["main"],
+          },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("MiniMax-M2.5"), model("MiniMax-M3")]),
+    });
+
+    const preview = await operations.previewApply("minimax-portal");
+    await operations.applyStrategy({
+      provider: "minimax-portal",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: ["MiniMax-M2.5"],
+      targetAgents: ["main"],
+    });
+
+    expect(getConfig().agents?.list?.[0]).toMatchObject({
+      id: "main",
+      modelPolicy: {
+        allow: ["minimax-portal/MiniMax-M3"],
+      },
+      models: {
+        "minimax-portal/MiniMax-M3": {},
+      },
+    });
+  });
+
   it("removes deselected models from target agent allowlists and model entries", async () => {
     const { api, getConfig } = createApi(
       {
@@ -1329,6 +1418,121 @@ describe("Control UI operations", () => {
     ]);
   });
 
+  it("rewrites alias references by moving the alias definition to the target model", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: {
+          model: { primary: "fast" },
+          models: {
+            "openrouter/stale/model": { alias: "fast" },
+          },
+        },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.protectedModels).toEqual([
+      {
+        modelId: "stale/model",
+        ref: "openrouter/stale/model",
+        references: ["agents.defaults.model.primary"],
+      },
+    ]);
+
+    const applied = await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: preview.plan.removedIds,
+      referenceRewrites: [
+        {
+          protectedModelId: "stale/model",
+          targetRef: "openrouter/openai/gpt-4o",
+          useDefaultModel: false,
+        },
+      ],
+    });
+
+    expect(applied.protectedModels).toEqual([]);
+    expect(getConfig().agents?.defaults?.model?.primary).toBe("fast");
+    expect(getConfig().agents?.defaults?.models).toEqual({
+      "openrouter/openai/gpt-4o": { alias: "fast" },
+    });
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+    ]);
+  });
+
+  it("refuses to merge two protected aliases onto one model", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: {
+          model: { primary: "fast" },
+          models: {
+            "openrouter/stale/model": { alias: "fast" },
+            "openrouter/openai/gpt-4o": { alias: "gpt" },
+          },
+        },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("openai/gpt-4o"), model("stale/model")],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^openai/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("openai/gpt-4o")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    await expect(
+      operations.applyStrategy({
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: preview.plan.removedIds,
+        referenceRewrites: [
+          {
+            protectedModelId: "stale/model",
+            targetRef: "openrouter/openai/gpt-4o",
+            useDefaultModel: false,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/both models define different aliases/);
+
+    expect(getConfig().agents?.defaults?.models).toEqual({
+      "openrouter/stale/model": { alias: "fast" },
+      "openrouter/openai/gpt-4o": { alias: "gpt" },
+    });
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+      "stale/model",
+    ]);
+  });
+
   it("refuses a rewrite that points at a model the plan also removes", async () => {
     const { api, getConfig } = createApi({
       agents: { defaults: { utilityModel: "openrouter/stale/model" } },
@@ -1409,6 +1613,63 @@ describe("Control UI operations", () => {
       }),
     ).rejects.toThrow(/不属于当前 Provider/);
     expect(getConfig().agents?.defaults?.utilityModel).toBe("openrouter/stale/model");
+  });
+
+  it("refuses a chain of protected-model rewrites", async () => {
+    const { api, getConfig } = createApi({
+      agents: {
+        defaults: {
+          utilityModel: "openrouter/protected-a",
+          decisionModel: "openrouter/protected-b",
+        },
+      },
+      ...baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [
+              model("kept/model"),
+              model("protected-a"),
+              model("protected-b"),
+            ],
+          },
+        },
+        {
+          openrouter: { filter: { includeRegex: "^kept/" } },
+        },
+      ),
+    });
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [model("kept/model")]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    await expect(
+      operations.applyStrategy({
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: preview.plan.removedIds,
+        referenceRewrites: [
+          {
+            protectedModelId: "protected-a",
+            targetRef: "openrouter/protected-b",
+            useDefaultModel: false,
+          },
+          {
+            protectedModelId: "protected-b",
+            targetRef: "openrouter/kept/model",
+            useDefaultModel: false,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/也会在本次操作中被改写/);
+    expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
+      "kept/model",
+      "protected-a",
+      "protected-b",
+    ]);
   });
 
   it("reports the default model so the UI can offer it as a rewrite target", async () => {

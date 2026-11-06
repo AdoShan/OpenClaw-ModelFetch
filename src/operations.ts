@@ -5,12 +5,8 @@ import type {
   PluginJsonValue,
   PluginSessionActionContext,
 } from "openclaw/plugin-sdk/core";
-import {
-  getSessionEntryAsync,
-  listSessionEntries,
-  patchSessionEntry,
-  type SessionEntry,
-} from "openclaw/plugin-sdk/session-store-runtime";
+import * as sessionStoreRuntime from "openclaw/plugin-sdk/session-store-runtime";
+import type { SessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { modelFetchContract } from "./contract.js";
 import {
   applyModelReferenceProtection,
@@ -18,6 +14,7 @@ import {
   collectModelReferenceUsages,
   fetchProviderModels,
   getProvider,
+  listConfiguredAgentEntries,
   mergeModels,
   migrateModelRefEntries,
   resolveDefaultModelRef,
@@ -138,7 +135,11 @@ type SessionSelectionScope = {
 type SessionStoreRuntime = {
   getSessionEntryAsync: typeof getSessionEntryAsync;
   patchSessionEntry: typeof patchSessionEntry;
-  listSessionEntries: typeof listSessionEntries;
+  listSessionEntries: (
+    params: Parameters<typeof sessionStoreRuntime.listSessionEntries>[0],
+  ) =>
+    | ReturnType<typeof sessionStoreRuntime.listSessionEntries>
+    | ReturnType<typeof sessionStoreRuntime.listSessionEntriesAsync>;
 };
 
 type SessionEntryCandidate = {
@@ -154,6 +155,19 @@ type SessionResetTarget = {
 
 const AFFECTED_SESSION_LIMIT = 2_000;
 const DEFAULT_AGENT_ID = "main";
+const getSessionEntryAsync = sessionStoreRuntime.getSessionEntryAsync;
+const patchSessionEntry = sessionStoreRuntime.patchSessionEntry;
+
+async function listSessionEntriesCompat(
+  params: Parameters<typeof sessionStoreRuntime.listSessionEntries>[0],
+): ReturnType<typeof sessionStoreRuntime.listSessionEntriesAsync> {
+  if (typeof sessionStoreRuntime.listSessionEntriesAsync === "function") {
+    return sessionStoreRuntime.listSessionEntriesAsync({
+      agentId: params?.agentId ?? DEFAULT_AGENT_ID,
+    });
+  }
+  return sessionStoreRuntime.listSessionEntries(params);
+}
 
 export type ModelFetchOperations = ReturnType<typeof createModelFetchOperations>;
 
@@ -263,26 +277,42 @@ function normalizeReferenceRewrites(
       toRef: targetRef,
     });
   }
+
+  const rewrittenProtectedIds = new Set(
+    result.map((entry) => entry.protectedModelId),
+  );
+  for (const entry of result) {
+    const targetId = entry.toRef.slice(providerPrefix.length);
+    if (
+      targetId !== entry.protectedModelId &&
+      rewrittenProtectedIds.has(targetId)
+    ) {
+      throw new Error(
+        `引用改写目标 ${entry.toRef} 也会在本次操作中被改写，已取消写入。请改为一个最终保留的模型。`,
+      );
+    }
+  }
   return result;
 }
 
 function planFingerprint(input: {
   providerId: string;
   filter: ModelFilterConfig;
-  fetchedIds: string[];
-  existingIds: string[];
+  fetched: ModelDefinitionLike[];
+  existing: ModelDefinitionLike[];
   selectedIds: string[];
   addedIds: string[];
   removedIds: string[];
   protectedModels: ProtectedModel[];
+  defaultModelRef?: string;
 }): string {
   return createHash("sha256")
     .update(
       JSON.stringify({
         provider: input.providerId,
         filter: input.filter,
-        fetched: input.fetchedIds,
-        existing: input.existingIds,
+        fetched: input.fetched,
+        existing: input.existing,
         selected: input.selectedIds,
         added: input.addedIds,
         removed: input.removedIds,
@@ -290,6 +320,7 @@ function planFingerprint(input: {
           modelId: entry.modelId,
           references: entry.references,
         })),
+        defaultModelRef: input.defaultModelRef,
       }),
     )
     .digest("hex");
@@ -440,7 +471,11 @@ export function createModelFetchOperations({
   factoryConfig,
   fetchModels = fetchProviderModels,
   now = () => new Date(),
-  sessionStore = { getSessionEntryAsync, patchSessionEntry, listSessionEntries },
+  sessionStore = {
+    getSessionEntryAsync,
+    patchSessionEntry,
+    listSessionEntries: listSessionEntriesCompat,
+  },
 }: {
   api: OpenClawPluginApi;
   factoryConfig?: ModelFetchConfig;
@@ -463,8 +498,7 @@ export function createModelFetchOperations({
   }
 
   function configuredAgentIds(config = currentConfig()): string[] {
-    const entries = (config as MutableConfig | undefined)?.agents?.entries ?? {};
-    return Object.keys(entries).filter((agentId) => agentId.trim().length > 0);
+    return listConfiguredAgentEntries(config).map(({ id }) => id);
   }
 
   /**
@@ -675,23 +709,23 @@ export function createModelFetchOperations({
       }
     }
 
+    const defaultModelRef = resolveDefaultModelRef(config);
     const fingerprint = planFingerprint({
       providerId,
       filter,
-      fetchedIds: fetched.map((model) => model.id),
-      existingIds,
+      fetched,
+      existing,
       selectedIds: merge.selectedIds,
       addedIds,
       removedIds,
       protectedModels: protection.protectedModels,
+      defaultModelRef,
     });
 
     const caseVariants = collectCaseVariantRelations(
       removedIds,
       protection.models.map((model) => model.id),
     );
-    const defaultModelRef = resolveDefaultModelRef(config);
-
     return {
       providerId,
       provider,
@@ -718,11 +752,9 @@ export function createModelFetchOperations({
     const config = currentConfig();
     const providers = (config as MutableConfig | undefined)?.models?.providers ?? {};
     const result: ProviderSummary[] = [];
-    const agentEntries = (config as MutableConfig | undefined)?.agents?.entries ?? {};
-    const agents: AgentSummary[] = Object.entries(agentEntries)
-      .filter(([agentId]) => typeof agentId === "string" && agentId.trim().length > 0)
-      .map(([agentId, entry]) => ({
-        id: agentId,
+    const agents: AgentSummary[] = listConfiguredAgentEntries(config)
+      .map(({ id, entry }) => ({
+        id,
         hasModelAllowlist:
           Array.isArray(entry?.modelPolicy?.allow) && entry.modelPolicy.allow.length > 0,
       }))
@@ -851,15 +883,24 @@ export function createModelFetchOperations({
     );
     let syncedAgents: string[] = [];
     const rewrittenReferences: string[] = [];
+    let removedIds = computed.removedIds;
+    let finalProtectedModels = computed.protectedModels;
 
     const result = await mutateConfigFileWithRetry(runtime, {
       base: "source",
       afterWrite: { mode: "auto" },
       mutate: (draft) => {
+        rewrittenReferences.length = 0;
+        syncedAgents = [];
+        removedIds = computed.removedIds;
+        finalProtectedModels = computed.protectedModels;
+
         const config = draft as MutableConfig;
         const target = getProvider(config, provider);
-        const currentExistingIds = (target.models ?? []).map((model) => model.id);
-        if (!sameStringSets(currentExistingIds, computed.existingIds)) {
+        if (
+          JSON.stringify(target.models ?? []) !==
+          JSON.stringify(computed.existingModels)
+        ) {
           throw new Error("Provider 配置在确认后发生变化，已取消写入。请重新预览。");
         }
         const currentFilter = normalizeFilter(
@@ -886,22 +927,30 @@ export function createModelFetchOperations({
         // walker above leaves them alone. A case-only rename has to move them
         // to the surviving spelling; otherwise the alias and the allowlist
         // entry are dropped along with the stale id.
-        const entryMigration = migrateModelRefEntries(
+        // Explicit reference rewrites can change an alias definition used by
+        // any agent, so those entries are migrated across the full roster.
+        const rewriteEntryMigration = migrateModelRefEntries(
           config,
-          [
-            ...rewrites.map((rewrite) => ({
-              fromRef: rewrite.fromRef,
-              toRef: rewrite.toRef,
-            })),
-            ...computed.caseVariants.map((variant) => ({
-              fromRef: `${provider}/${variant.removedId}`,
-              toRef: `${provider}/${variant.survivingModelId}`,
-            })),
-          ],
+          rewrites.map((rewrite) => ({
+            fromRef: rewrite.fromRef,
+            toRef: rewrite.toRef,
+          })),
+          { onAliasConflict: "error" },
+        );
+        if (rewriteEntryMigration.changed) {
+          rewrittenReferences.push(...rewriteEntryMigration.paths);
+        }
+
+        const caseEntryMigration = migrateModelRefEntries(
+          config,
+          computed.caseVariants.map((variant) => ({
+            fromRef: `${provider}/${variant.removedId}`,
+            toRef: `${provider}/${variant.survivingModelId}`,
+          })),
           { targetAgents: nextTargetAgents },
         );
-        if (entryMigration.changed) {
-          rewrittenReferences.push(...entryMigration.paths);
+        if (caseEntryMigration.changed) {
+          rewrittenReferences.push(...caseEntryMigration.paths);
         }
 
         // The rewrites may have released the references that kept a model in
@@ -915,6 +964,13 @@ export function createModelFetchOperations({
               config,
             }).models
           : computed.finalModels;
+        const finalIds = new Set(finalModels.map((model) => model.id));
+        removedIds = computed.existingIds.filter((id) => !finalIds.has(id));
+        finalProtectedModels = collectModelReferenceUsages(
+          config,
+          provider,
+          computed.protectedModels.map((entry) => entry.modelId),
+        );
 
         target.models = finalModels;
         ensurePluginEntry(config, provider, computed.filter, nextTargetAgents);
@@ -932,7 +988,7 @@ export function createModelFetchOperations({
     // latest state and honours locks taken since the preview.
     const affectedSessions = await affectedSessionsFor({
       providerId: provider,
-      removedIds: computed.removedIds,
+      removedIds,
       scope,
     });
     const resetSessionKeys = await resetStaleSessionSelections({
@@ -941,7 +997,7 @@ export function createModelFetchOperations({
         agentId: session.agentId,
       })),
       providerId: provider,
-      removedIds: computed.removedIds,
+      removedIds,
       sessionStore,
     });
 
@@ -953,10 +1009,12 @@ export function createModelFetchOperations({
       fetchedCount: computed.fetched.length,
       added: computed.addedIds.length,
       unchanged: computed.unchangedCount,
-      removed: computed.removedIds.length,
+      removed: removedIds.length,
       selectedIds: computed.selectedIds,
-      protectedModels: computed.protectedModels,
-      rewrittenReferences,
+      protectedModels: finalProtectedModels,
+      rewrittenReferences: [...new Set(rewrittenReferences)].sort((left, right) =>
+        left.localeCompare(right),
+      ),
       targetAgents: nextTargetAgents,
       syncedAgents,
       sessionSelectionResets: resetSessionKeys.length,

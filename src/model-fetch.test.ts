@@ -8,6 +8,7 @@ import {
   collectModelReferenceUsages,
   createModelFetchTool,
   fetchProviderModels,
+  listConfiguredAgentEntries,
   mergeModels,
   migrateModelRefEntries,
   resolveDefaultModelRef,
@@ -123,6 +124,82 @@ describe("filtering", () => {
   });
 });
 
+describe("agent synchronization", () => {
+  it("falls back to the runtime agent list when the authored entry map is empty", () => {
+    const draft = {
+      agents: {
+        entries: {},
+        list: [
+          {
+            id: "main",
+            modelPolicy: {
+              allow: ["proxy/old-model"],
+            },
+          },
+        ],
+      },
+    };
+
+    expect(listConfiguredAgentEntries(draft)).toEqual([
+      {
+        id: "main",
+        entry: draft.agents.list[0],
+      },
+    ]);
+  });
+
+  it("supports legacy agent lists and still syncs provider-scoped agents", () => {
+    const draft = {
+      agents: {
+        list: [
+          {
+            id: "main",
+            modelPolicy: {
+              allow: ["proxy/old-model", "other/model"],
+            },
+            models: {
+              "proxy/old-model": { alias: "Old" },
+              "other/model": { alias: "Other" },
+            },
+          },
+          {
+            id: "worker",
+            modelPolicy: {
+              allow: ["proxy/old-model"],
+            },
+            models: {
+              "proxy/old-model": {},
+            },
+          },
+        ],
+      },
+    };
+    const models = [model("new-model")];
+
+    const allowResult = syncConfiguredModelPolicyAllow(draft, "proxy", models, {
+      targetAgents: ["main"],
+    });
+    expect(allowResult.syncedAgents).toEqual(["main", "worker"]);
+    expect(draft.agents.list[0].modelPolicy.allow).toEqual([
+      "other/model",
+      "proxy/new-model",
+    ]);
+    expect(draft.agents.list[1].modelPolicy.allow).toEqual(["proxy/new-model"]);
+
+    const modelResult = syncAgentModelEntries(draft, "proxy", models, {
+      targetAgents: allowResult.syncedAgents,
+    });
+    expect(modelResult.syncedAgents).toEqual(["main", "worker"]);
+    expect(draft.agents.list[0].models).toEqual({
+      "proxy/new-model": {},
+      "other/model": { alias: "Other" },
+    });
+    expect(draft.agents.list[1].models).toEqual({
+      "proxy/new-model": {},
+    });
+  });
+});
+
 describe("model merge", () => {
   it("preserves existing metadata and adds only new selected models", () => {
     const existing = { ...model("same"), name: "Authored name" };
@@ -197,6 +274,10 @@ describe("model reference protection", () => {
     tools: {
       exec: { reviewer: { model: { primary: "openrouter/media-reviewer", fallbacks: [] } } },
       media: {
+        models: [
+          { provider: "openrouter", model: "shared-media-model" },
+          { provider: "other", model: "shared-media-model" },
+        ],
         audio: { preferredModel: "openrouter/tools-audio" },
         video: { preferredModel: "openrouter/tools-video" },
       },
@@ -231,6 +312,7 @@ describe("model reference protection", () => {
       "media-reviewer",
       "tools-audio",
       "tools-video",
+      "shared-media-model",
       "root-tts-summary",
       "channel-model",
       "discord-voice-model",
@@ -267,6 +349,7 @@ describe("model reference protection", () => {
       "music-model",
       "pdf-model",
       "root-tts-summary",
+      "shared-media-model",
       "subagents-model",
       "tools-audio",
       "tools-video",
@@ -279,6 +362,9 @@ describe("model reference protection", () => {
     ]);
     expect(usages.find((usage) => usage.modelId === "heartbeat-model")?.references).toEqual([
       "agents.defaults.heartbeat.model.primary",
+    ]);
+    expect(usages.find((usage) => usage.modelId === "shared-media-model")?.references).toEqual([
+      "tools.media.models[0].model",
     ]);
     expect(usages.find((usage) => usage.modelId === "subagents-model")?.references).toEqual([
       "agents.defaults.subagents.model",
@@ -373,6 +459,31 @@ describe("model reference protection", () => {
     ]);
   });
 
+  it("resolves model aliases used by explicit model consumers", () => {
+    const usages = collectModelReferenceUsages(
+      {
+        agents: {
+          defaults: {
+            model: { primary: "fast" },
+            models: {
+              "openrouter/aliased-model": { alias: "fast" },
+            },
+          },
+        },
+      },
+      "openrouter",
+      ["aliased-model"],
+    );
+
+    expect(usages).toEqual([
+      {
+        modelId: "aliased-model",
+        ref: "openrouter/aliased-model",
+        references: ["agents.defaults.model.primary"],
+      },
+    ]);
+  });
+
   it("scans legacy agent list entries", () => {
     const usages = collectModelReferenceUsages(
       { agents: { list: [{ model: "openrouter/list-model" }] } },
@@ -452,7 +563,13 @@ describe("model reference rewriting", () => {
     },
     tools: {
       exec: { reviewer: { model: { primary: "magpie/auto/old", fallbacks: [] } } },
-      media: { audio: { preferredModel: "magpie/auto/old" } },
+      media: {
+        models: [
+          { provider: "magpie", model: "auto/old" },
+          { provider: "other", model: "auto/old" },
+        ],
+        audio: { preferredModel: "magpie/auto/old" },
+      },
     },
   };
 
@@ -471,6 +588,10 @@ describe("model reference rewriting", () => {
     expect(draft.channels.modelByChannel.telegram.main).toBe("magpie/auto/new");
     expect(draft.channels.discord.voice.model).toBe("magpie/auto/new");
     expect(draft.tools.exec.reviewer.model.primary).toBe("magpie/auto/new");
+    expect(draft.tools.media.models).toEqual([
+      { provider: "magpie", model: "auto/new" },
+      { provider: "other", model: "auto/old" },
+    ]);
     expect(draft.tools.media.audio.preferredModel).toBe("magpie/auto/new");
   });
 
@@ -495,6 +616,80 @@ describe("model reference rewriting", () => {
         agents: { defaults: { model: { primary: "magpie/auto/primary" } } },
       }),
     ).toBe("magpie/auto/primary");
+  });
+
+  it("resolves an aliased default model to its provider reference", () => {
+    expect(
+      resolveDefaultModelRef({
+        agents: {
+          defaults: {
+            model: { primary: "fast" },
+            models: {
+              "magpie/auto/fast-model": { alias: "fast" },
+            },
+          },
+        },
+      }),
+    ).toBe("magpie/auto/fast-model");
+  });
+
+  it("resolves aliases within the agent that uses them", () => {
+    expect(
+      resolveDefaultModelRef({
+        agents: {
+          defaults: {
+            models: {
+              "magpie/default/model": { alias: "fast" },
+            },
+          },
+          entries: {
+            main: {
+              model: { primary: "fast" },
+              models: {
+                "magpie/agent/model": { alias: "fast" },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe("magpie/agent/model");
+  });
+
+  it("protects the model selected by a scoped alias when another agent reuses the alias", () => {
+    const usages = collectModelReferenceUsages(
+      {
+        agents: {
+          defaults: {
+            models: {
+              "proxy/agent-a-model": { alias: "fast" },
+            },
+          },
+          entries: {
+            main: {
+              utilityModel: "fast",
+              models: {
+                "proxy/agent-b-model": { alias: "fast" },
+              },
+            },
+            worker: {
+              models: {
+                "proxy/agent-a-model": { alias: "fast" },
+              },
+            },
+          },
+        },
+      },
+      "proxy",
+      ["agent-a-model", "agent-b-model"],
+    );
+
+    expect(usages).toEqual([
+      {
+        modelId: "agent-b-model",
+        ref: "proxy/agent-b-model",
+        references: ["agents.entries.main.utilityModel"],
+      },
+    ]);
   });
 
   it("falls back to the first agent that names a primary model", () => {
@@ -728,6 +923,11 @@ describe("provider endpoints", () => {
       { baseUrl: "https://openrouter.ai/api/v1", api: "openai-responses" },
       "https://openrouter.ai/api/v1/models",
     ],
+    [
+      "openrouter",
+      { baseUrl: "https://gateway.example/openrouter/v1", api: "openai-responses" },
+      "https://gateway.example/openrouter/v1/models",
+    ],
   ])("%s builds the expected models endpoint", (providerId: string, provider: ProviderLike, expected: string) => {
     expect(buildModelsEndpoint(providerId, provider)).toBe(expected);
   });
@@ -737,7 +937,24 @@ describe("guarded provider fetch", () => {
   it("parses OpenAI-compatible rows and passes the SSRF policy", async () => {
     const guardedFetch = vi.fn(async () => ({
       response: new Response(
-        JSON.stringify({ data: [{ id: "model-a", name: "Model A", context_length: 200000 }] }),
+        JSON.stringify({
+          data: [
+            {
+              id: "model-a",
+              name: "Model A",
+              context_length: 200_000,
+              top_provider: { max_completion_tokens: 32_000 },
+              architecture: { input_modalities: ["text", "image"] },
+              supported_parameters: ["reasoning", "tools"],
+              pricing: {
+                prompt: "0.000001",
+                completion: "0.000002",
+                input_cache_read: "0.00000025",
+                input_cache_write: "0.0000005",
+              },
+            },
+          ],
+        }),
       ),
       finalUrl: "https://api.example/v1/models",
       release: vi.fn(async () => undefined),
@@ -753,7 +970,22 @@ describe("guarded provider fetch", () => {
       guardedFetch,
     });
 
-    expect(models).toEqual([expect.objectContaining({ id: "model-a", contextWindow: 200000 })]);
+    expect(models).toEqual([
+      expect.objectContaining({
+        id: "model-a",
+        name: "Model A",
+        contextWindow: 200_000,
+        maxTokens: 32_000,
+        reasoning: true,
+        input: ["text", "image"],
+        cost: {
+          input: 1,
+          output: 2,
+          cacheRead: 0.25,
+          cacheWrite: 0.5,
+        },
+      }),
+    ]);
     expect(guardedFetch).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "https://api.example/v1/models",
@@ -783,6 +1015,101 @@ describe("guarded provider fetch", () => {
         policy: ssrfPolicyFromAllowPrivateNetwork(true),
       }),
     );
+  });
+
+  it("follows cursor pagination and releases every guarded response", async () => {
+    const requestedUrls: string[] = [];
+    const release = vi.fn(async () => undefined);
+    const guardedFetch = vi.fn(
+      async ({ url }: { url: string }) => {
+        requestedUrls.push(url);
+        const body = url.includes("after_id=cursor-2")
+          ? {
+              data: [{ id: "model-c", display_name: "Model C" }],
+              has_more: false,
+            }
+          : url.includes("after_id=cursor-1")
+            ? {
+                data: [{ id: "model-b", display_name: "Model B" }],
+                has_more: true,
+                last_id: "cursor-2",
+              }
+            : {
+                data: [{ id: "model-a", display_name: "Model A" }],
+                has_more: true,
+                last_id: "cursor-1",
+              };
+        return {
+          response: new Response(JSON.stringify(body)),
+          finalUrl: url,
+          release,
+        };
+      },
+    );
+
+    const models = await fetchProviderModels({
+      providerId: "anthropic",
+      provider: {
+        baseUrl: "https://api.anthropic.com",
+        api: "anthropic-messages",
+      },
+      guardedFetch,
+    });
+
+    expect(requestedUrls).toEqual([
+      "https://api.anthropic.com/v1/models",
+      "https://api.anthropic.com/v1/models?after_id=cursor-1",
+      "https://api.anthropic.com/v1/models?after_id=cursor-2",
+    ]);
+    expect(models.map((entry) => entry.id)).toEqual(["model-a", "model-b", "model-c"]);
+    expect(release).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a pagination cursor that repeats", async () => {
+    const guardedFetch = vi.fn(async () => ({
+      response: new Response(
+        JSON.stringify({
+          data: [{ id: "model-a" }],
+          has_more: true,
+          last_id: "same-cursor",
+        }),
+      ),
+      finalUrl: "https://api.example/v1/models",
+      release: vi.fn(async () => undefined),
+    }));
+
+    await expect(
+      fetchProviderModels({
+        providerId: "proxy",
+        provider: {
+          baseUrl: "https://api.example/v1",
+          api: "openai-completions",
+        },
+        guardedFetch,
+      }),
+    ).rejects.toThrow(/repeated cursor/);
+    expect(guardedFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a successful response without a supported model array", async () => {
+    const release = vi.fn(async () => undefined);
+    const guardedFetch = vi.fn(async () => ({
+      response: new Response(JSON.stringify({ error: { message: "upstream failed" } })),
+      finalUrl: "https://api.example/v1/models",
+      release,
+    }));
+
+    await expect(
+      fetchProviderModels({
+        providerId: "proxy",
+        provider: {
+          baseUrl: "https://api.example/v1",
+          api: "openai-completions",
+        },
+        guardedFetch,
+      }),
+    ).rejects.toThrow(/supported models array/);
+    expect(release).toHaveBeenCalledOnce();
   });
 });
 
@@ -926,6 +1253,79 @@ describe("tool execution", () => {
     expect(
       (draft.models.providers.openrouter.models as ModelDefinitionLike[]).map((row) => row.id),
     ).toEqual(["openai/gpt-4o", "utility-model"]);
+  });
+
+  it("rechecks references against the final write draft", async () => {
+    const config: {
+      agents?: { defaults?: { utilityModel?: string } };
+      models: {
+        providers: {
+          openrouter: {
+            baseUrl: string;
+            api: string;
+            models: ModelDefinitionLike[];
+          };
+        };
+      };
+    } = {
+      models: {
+        providers: {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("utility-model")],
+          },
+        },
+      },
+    };
+    const mutateConfigFile = vi.fn(
+      async ({ mutate }: { mutate: (draft: unknown) => void }) => {
+        const draft = structuredClone(config);
+        mutate(draft);
+        Object.assign(config, draft);
+        return { path: "/tmp/openclaw.json" };
+      },
+    );
+    const api = {
+      config,
+      runtime: {
+        config: {
+          current: () => config,
+          mutateConfigFile,
+        },
+      },
+    } as unknown as OpenClawPluginApi;
+    const toolContext = { runtimeConfig: config } as OpenClawPluginToolContext;
+    const tool = createModelFetchTool({
+      api,
+      toolContext,
+      fetchModels: vi.fn(async () => {
+        config.agents = {
+          defaults: { utilityModel: "openrouter/utility-model" },
+        };
+        return [model("openai/gpt-4o")];
+      }),
+    });
+
+    const result = (await tool.execute("call-race-protected", {
+      provider: "openrouter",
+      includeRegex: "^openai/",
+    })) as { details: ModelFetchToolResult };
+
+    expect(result.details).toMatchObject({
+      removed: 0,
+      protectedModels: [
+        {
+          modelId: "utility-model",
+          ref: "openrouter/utility-model",
+          references: ["agents.defaults.utilityModel"],
+        },
+      ],
+    });
+    expect(config.models.providers.openrouter.models.map((row) => row.id)).toEqual([
+      "openai/gpt-4o",
+      "utility-model",
+    ]);
   });
 
   it("appends selected models to modelPolicy.allow when allowlist is configured", async () => {

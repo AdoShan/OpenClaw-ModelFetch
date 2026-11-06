@@ -35,7 +35,8 @@ Ollama 不需要 API Key。使用本机或私有网络地址时，还需在 Prov
 
 设置界面始终使用替换模式。Agent 工具可以显式传入 `replace: false` 执行追加写入；省略该参数时，实际默认值仍为 `true`。
 
-正则输入框失焦或按下 Enter 后更新筛选结果。
+筛选结果会随正则输入实时更新；输入框失焦和 Enter 仍会提交当前值，以兼容
+输入法组合输入和纯键盘操作。
 
 ## 保存的策略
 
@@ -79,13 +80,14 @@ Ollama 不需要 API Key。使用本机或私有网络地址时，还需在 Prov
 
 1. 重新获取 Provider 当前的远端模型列表。
 2. 再次应用该 Provider 已保存的策略，并重新计算新增、删除和受保护模型。
-3. 如果会删除已有模型，要求用户确认。弹窗会逐项列出模型 ID。
+3. 如果会删除已有模型，或需要确认受引用保护模型的处理方式，要求用户确认。弹窗会逐项列出模型 ID。
 4. 如果远端列表、已保存策略、Provider 模型或引用保护结果在预览后发生变化，取消写入。
 5. 将确认后的模型列表写入 `models.providers.<providerId>.models`。
 6. 同步适用的 Agent 模型 allowlist。
 7. 清除受影响会话中的过期模型选择；已锁定模型选择的会话不会修改。
 
 如果模型 ID 已经存在，会保留原有的名称、价格、推理能力、输入模态、上下文窗口和最大 Token 等定义。
+新模型会尽量从远端元数据导入上述字段；远端未提供的字段使用与 OpenClaw 兼容的默认值。
 
 ### 引用保护
 
@@ -93,10 +95,11 @@ Ollama 不需要 API Key。使用本机或私有网络地址时，还需在 Prov
 
 - Agent 的 primary、utility、decision、image、media、voice、PDF、heartbeat、subagents、compaction、memory flush 和嵌入式 Agent failover 模型。
 - Agent 条目的 exec reviewer 和 `tts.summaryModel`，以及根级 `tts.summaryModel`。
-- Tools 的 exec reviewer 与 media preferred model。
+- Tools 的 exec reviewer、media preferred model，以及 `tools.media.models[].provider/model`。
 - Hook、`channels.modelByChannel` 和 Discord voice 中的模型引用。
 
 删除确认弹窗会列出受保护的模型，以及保留该模型的准确配置路径。
+`agents.defaults.models` 和 Agent 模型条目中的别名会按实际使用它的 Agent 作用域解析。如果一次别名迁移会把两个不同别名合并到同一个目标模型，应用会被拒绝。
 
 ### Agent allowlist
 

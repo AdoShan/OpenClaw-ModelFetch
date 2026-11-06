@@ -33,6 +33,7 @@ type RewriteCandidate = {
  * change between preview and apply.
  */
 const DEFAULT_MODEL_OPTION = "__default_model__";
+const KEEP_MODEL_OPTION = "__keep_model__";
 
 export type AffectedSession = {
   sessionKey: string;
@@ -151,6 +152,10 @@ type InterfaceMessages = {
   confirmRemove: string;
   cancel: string;
   confirmApply: string;
+  confirmReview: string;
+  protectedReviewTitle: (count: number) => string;
+  protectedReviewDescription: (provider: string) => string;
+  protectedReviewPrompt: string;
   savedNotice: (provider: string) => string;
   referenceNote: (count: number) => string;
   referenceRewriteLabel: string;
@@ -257,6 +262,12 @@ const ENGLISH_MESSAGES: InterfaceMessages = {
   confirmRemove: "Confirm the models to remove:",
   cancel: "Cancel",
   confirmApply: "Confirm apply and delete",
+  confirmReview: "Confirm apply",
+  protectedReviewTitle: (count) =>
+    `Review ${count} reference-protected models`,
+  protectedReviewDescription: (provider) =>
+    `These models in ${provider} are retained only because other configuration references them. Choose a rewrite target or keep each model before applying.`,
+  protectedReviewPrompt: "Review the handling for each protected model:",
   savedNotice: (provider) => `Filter strategy for ${provider} saved`,
   referenceNote: (count) =>
     `These ${count} models remain in the list because other configuration references them:`,
@@ -358,6 +369,11 @@ const CHINESE_MESSAGES: InterfaceMessages = {
   confirmRemove: "请确认要移除的模型：",
   cancel: "取消",
   confirmApply: "确认应用并删除",
+  confirmReview: "确认应用",
+  protectedReviewTitle: (count) => `确认处理 ${count} 个受引用保护的模型`,
+  protectedReviewDescription: (provider) =>
+    `${provider} 中的这些模型仅因其他配置引用而保留。应用前请为每个模型选择引用改写目标或保留该模型。`,
+  protectedReviewPrompt: "请确认每个受保护模型的处理方式：",
   savedNotice: (provider) => `${provider} 的筛选策略已保存`,
   referenceNote: (count) => `以下 ${count} 个模型仍被配置引用，将保留在列表中：`,
   referenceRewriteLabel: "改写引用为",
@@ -555,7 +571,7 @@ const PAGE_MARKUP = `
         <p data-ref="deleteDescription"></p>
       </div>
       <div class="mf-dialog-body">
-        <p data-i18n="confirmRemove">请确认要移除的模型：</p>
+        <p data-ref="confirmRemove" data-i18n="confirmRemove">请确认要移除的模型：</p>
         <div class="mf-delete-list" data-ref="deleteList"></div>
         <div class="mf-reference-note" data-ref="deleteRefs" hidden></div>
         <div class="mf-reference-note" data-ref="sessionImpact" hidden>
@@ -717,7 +733,8 @@ export function mountModelFetchSettings(
   const protections = new Map<string, ProtectedModel[]>();
   /**
    * The reference rewrite target chosen for a protected model, keyed by the
-   * model id. `DEFAULT_MODEL_OPTION` means the agent default model.
+   * model id. `DEFAULT_MODEL_OPTION` means the agent default model and
+   * `KEEP_MODEL_OPTION` means no rewrite.
    */
   const rewriteSelections = new Map<string, string>();
   let rewriteCandidatesByProvider: RewriteCandidate[] = [];
@@ -762,6 +779,7 @@ export function mountModelFetchSettings(
     deleteTitle: page.querySelector<HTMLElement>('[data-ref="deleteTitle"]')!,
     deleteDescription: page.querySelector<HTMLElement>('[data-ref="deleteDescription"]')!,
     deleteList: page.querySelector<HTMLElement>('[data-ref="deleteList"]')!,
+    confirmRemove: page.querySelector<HTMLElement>('[data-ref="confirmRemove"]')!,
     deleteRefs: page.querySelector<HTMLElement>('[data-ref="deleteRefs"]')!,
     sessionImpact: page.querySelector<HTMLElement>('[data-ref="sessionImpact"]')!,
     sessionImpactTitle: page.querySelector<HTMLElement>('[data-ref="sessionImpactTitle"]')!,
@@ -1267,7 +1285,7 @@ export function mountModelFetchSettings(
   }
 
   /**
- * Builds the rewrite targets from the models that stay in the provider after
+   * Builds the rewrite targets from the models that stay in the provider after
    * the replacement.
    *
    * The list comes from the preview result rather than the current config,
@@ -1317,20 +1335,25 @@ export function mountModelFetchSettings(
   }
 
   function defaultRewriteChoice(entry: ProtectedModel): string {
-    return caseVariantChoice(entry) ?? DEFAULT_MODEL_OPTION;
+    const variant = caseVariantChoice(entry);
+    if (variant) return variant;
+    return defaultModelRef &&
+      rewriteCandidates(entry.modelId).some(
+        (candidate) => candidate.ref === defaultModelRef,
+      )
+      ? DEFAULT_MODEL_OPTION
+      : KEEP_MODEL_OPTION;
   }
 
   /**
    * Translates the dropdown choices into the rewrite instructions sent with
    * the apply call.
    *
-   * The dropdown opens on "Default model", so a protected model is rewritten
-   * to the agent default unless the model has a surviving letter-case
-   * variant, which is the same remote model and therefore wins as the target.
-   * "Keep this model" leaves everything untouched. The default model is
-   * resolved here so the backend receives a concrete reference. When it
-   * cannot be resolved the rewrite is skipped, which keeps the model
-   * protected rather than pointing the config at nothing.
+   * A case variant is rewritten to its surviving spelling. Otherwise the
+   * agent default is used when it is a valid target; the model is kept when
+   * no safe default exists. "Keep this model" always leaves everything
+   * untouched. The default model is resolved here so the backend receives a
+   * concrete reference.
    */
   function buildReferenceRewrites(
     provider: ProviderSummary,
@@ -1339,6 +1362,7 @@ export function mountModelFetchSettings(
     const rewrites: ReferenceRewrite[] = [];
     for (const entry of plan.protectedModels) {
       const choice = rewriteSelections.get(entry.modelId) ?? defaultRewriteChoice(entry);
+      if (choice === KEEP_MODEL_OPTION) continue;
 
       if (choice === DEFAULT_MODEL_OPTION) {
         if (!defaultModelRef) continue;
@@ -1350,6 +1374,7 @@ export function mountModelFetchSettings(
         continue;
       }
 
+      if (!choice) continue;
       rewrites.push({
         protectedModelId: entry.modelId,
         targetRef: choice,
@@ -1389,6 +1414,11 @@ export function mountModelFetchSettings(
       const defaultOption = document.createElement("option");
       defaultOption.value = DEFAULT_MODEL_OPTION;
       defaultOption.textContent = m.referenceRewriteDefault;
+      defaultOption.disabled =
+        !defaultModelRef ||
+        !rewriteCandidates(entry.modelId).some(
+          (candidate) => candidate.ref === defaultModelRef,
+        );
       select.append(defaultOption);
 
       for (const candidate of rewriteCandidates(entry.modelId)) {
@@ -1399,26 +1429,20 @@ export function mountModelFetchSettings(
       }
 
       const keepOption = document.createElement("option");
-      keepOption.value = "";
+      keepOption.value = KEEP_MODEL_OPTION;
       keepOption.textContent = m.referenceRewriteKeep;
       select.append(keepOption);
 
-      // The dropdown starts on "Default model", which is the replacement the
-      // user asked for by default, unless the list holds the same model under
-      // a different letter case. "Keep this model" stays available so a
-      // protected model can still be left in place.
+      // Prefer a safe case-variant or default-model rewrite, otherwise keep
+      // the protected model selected so applying cannot create a dangling
+      // reference by accident.
       const chosen = rewriteSelections.get(entry.modelId);
       const selectedValue = chosen ?? defaultRewriteChoice(entry);
       for (const option of select.options) {
         if (option.value === selectedValue) option.selected = true;
       }
       select.addEventListener("change", () => {
-        const value = select.value;
-        if (value) {
-          rewriteSelections.set(entry.modelId, value);
-        } else {
-          rewriteSelections.delete(entry.modelId);
-        }
+        rewriteSelections.set(entry.modelId, select.value);
       });
 
       row.append(select);
@@ -1545,15 +1569,29 @@ export function mountModelFetchSettings(
       previewing = false;
       render();
 
-      if (output.plan.removedIds.length === 0) {
+      if (
+        output.plan.removedIds.length === 0 &&
+        protectedModels.length === 0
+      ) {
         await applyPlan(provider, output.plan);
         return;
       }
 
-      refs.deleteTitle.textContent = m.deleteTitle(output.plan.removedIds.length);
-      refs.deleteDescription.textContent =
-        m.deleteDescriptionProvider(provider.label);
+      const hasDirectRemovals = output.plan.removedIds.length > 0;
+      refs.deleteTitle.textContent = hasDirectRemovals
+        ? m.deleteTitle(output.plan.removedIds.length)
+        : m.protectedReviewTitle(protectedModels.length);
+      refs.deleteDescription.textContent = hasDirectRemovals
+        ? m.deleteDescriptionProvider(provider.label)
+        : m.protectedReviewDescription(provider.label);
+      refs.confirmRemove.textContent = hasDirectRemovals
+        ? m.confirmRemove
+        : m.protectedReviewPrompt;
+      refs.confirmDelete.textContent = hasDirectRemovals
+        ? m.confirmApply
+        : m.confirmReview;
       refs.deleteList.replaceChildren();
+      refs.deleteList.hidden = !hasDirectRemovals;
       for (const id of output.plan.removedIds) {
         const row = document.createElement("div");
         row.className = "mf-delete-item";

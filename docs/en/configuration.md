@@ -35,7 +35,8 @@ The selection order is:
 
 The settings UI always uses replacement mode. The Agent tool can explicitly pass `replace: false` for additive behavior; when the parameter is omitted, the effective default is still `true`.
 
-Filter results update when a regex input loses focus or when Enter is pressed.
+Filter results update while you type. The inputs also commit on blur and Enter so
+IME composition and keyboard-only editing remain supported.
 
 ## Saved strategy
 
@@ -79,13 +80,14 @@ Applying a strategy performs these steps:
 
 1. Fetch the provider's current remote model list again.
 2. Reapply the saved Provider strategy and recompute additions, deletions, and protected models.
-3. Require confirmation when existing models will be deleted. The dialog lists the exact model IDs.
+3. Require confirmation when existing models will be deleted or reference-protected models need review. The dialog lists the exact model IDs.
 4. Abort the write if the remote list, saved strategy, provider models, or protected references changed after preview.
 5. Write the confirmed model list to `models.providers.<providerId>.models`.
 6. Synchronize applicable Agent model allowlists.
 7. Reset stale model selections in affected sessions unless a session has locked its model selection.
 
 Existing model definitions retain fields such as name, cost, reasoning support, input modalities, context window, and token limits when the model ID already exists.
+New rows import those fields from remote metadata when the endpoint provides them; missing values use OpenClaw-compatible defaults.
 
 ### Reference protection
 
@@ -93,10 +95,11 @@ Replacement mode does not delete a model that is still referenced by a non-Agent
 
 - Agent primary, utility, decision, image, media, voice, PDF, heartbeat, subagents, compaction, memory-flush, and embedded-Agent failover models.
 - Agent entry exec reviewer and `tts.summaryModel` references, plus root `tts.summaryModel`.
-- Tools exec reviewer and media preferred-model references.
+- Tools exec reviewer, media preferred-model, and `tools.media.models[].provider/model` references.
 - Hook, `channels.modelByChannel`, and Discord voice model references.
 
 The deletion dialog lists the protected models and the exact configuration paths that kept each one.
+Model aliases in `agents.defaults.models` and Agent-specific model entries are resolved in the Agent scope where they are used. Apply refuses an alias migration that would merge two different aliases onto one target model.
 
 ### Agent allowlists
 

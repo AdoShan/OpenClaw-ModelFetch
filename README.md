@@ -71,7 +71,7 @@ The settings interface follows the OpenClaw WebUI language: Chinese locales use 
 | --- | --- | --- | --- |
 | Fetch remote models | No | No | No |
 | Save strategy | Yes | No | No |
-| Apply strategy to config | No | Yes | Only when models will be deleted |
+| Apply strategy to config | No | Yes | When models would be deleted or protected references need review |
 
 Replacement mode is the default. Applying a strategy removes existing provider models that are not selected, except models protected by other OpenClaw configuration references.
 

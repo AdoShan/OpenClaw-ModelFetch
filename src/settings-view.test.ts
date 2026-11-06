@@ -552,6 +552,7 @@ describe("Model Fetch settings view", () => {
       const preview: PreviewApplyOutput = {
         provider: "openrouter",
         plan: applyPlan({
+          removedIds: [],
           protectedModels: [
             {
               modelId: "stale/model",
@@ -591,6 +592,7 @@ describe("Model Fetch settings view", () => {
       const preview: PreviewApplyOutput = {
         provider: "openrouter",
         plan: applyPlan({
+          removedIds: [],
           protectedModels: [
             {
               modelId: "stale/model",
@@ -703,6 +705,7 @@ describe("Model Fetch settings view", () => {
       const preview: PreviewApplyOutput = {
         provider: "openrouter",
         plan: applyPlan({
+          removedIds: [],
           protectedModels: [
             {
               modelId: "stale/model",
@@ -758,6 +761,63 @@ describe("Model Fetch settings view", () => {
         useDefaultModel: false,
       },
     ]);
+  });
+
+  it("keeps a protected model when the user explicitly chooses that option", async () => {
+    const harness = createHarness();
+    harness.handlers.set("strategy.preview", async () => {
+      const preview: PreviewApplyOutput = {
+        provider: "openrouter",
+        plan: applyPlan({
+          removedIds: [],
+          protectedModels: [
+            {
+              modelId: "stale/model",
+              ref: "openrouter/stale/model",
+              references: ["agents.defaults.utilityModel"],
+            },
+          ],
+          defaultModelRef: "openrouter/openai/gpt-4o",
+        }),
+        models: openRouterModels,
+      };
+      return preview;
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    const select = harness.container.querySelector<HTMLSelectElement>(
+      ".mf-reference-select",
+    )!;
+    const keep = [...select.options].find(
+      (option) => option.textContent === "保留该模型",
+    )!;
+    Object.defineProperty(select, "value", {
+      configurable: true,
+      value: keep.value,
+    });
+    select.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
+
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() =>
+      expect(
+        harness.requests.some((request) => request.actionId === "strategy.apply"),
+      ).toBe(true),
+    );
+    const apply = harness.requests.find(
+      (request) => request.actionId === "strategy.apply",
+    )!;
+    expect((apply.payload as { referenceRewrites?: unknown }).referenceRewrites).toEqual([]);
   });
 
   it("explains a removal that only differs from a surviving model by letter case", async () => {
