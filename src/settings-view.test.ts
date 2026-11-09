@@ -506,6 +506,34 @@ describe("Model Fetch settings view", () => {
     });
   });
 
+  it("applies a confirmed deletion on the first click and closes the dialog", async () => {
+    const harness = createHarness();
+    await mountReady(harness);
+    const applyButton = harness.container.querySelector<HTMLButtonElement>(
+      '[data-ref="applyButton"]',
+    )!;
+    applyButton.dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(
+        harness.requests.filter((request) => request.actionId === "strategy.apply"),
+      ).toHaveLength(1);
+      expect(dialog.hasAttribute("open")).toBe(false);
+      expect(harness.container.querySelector('[data-ref="saveState"]')?.textContent).toBe(
+        "已将 3 个模型写入 OpenRouter，新增 1，删除 1；同步 Agent：main",
+      );
+    });
+  });
+
   it("keeps other Provider drafts after applying the active Provider", async () => {
     const harness = createHarness();
     await mountReady(harness);

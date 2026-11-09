@@ -339,6 +339,64 @@ function sameStringSets(left: readonly string[], right: readonly string[]): bool
   );
 }
 
+/**
+ * Runtime config resolution fills Provider-level model defaults (notably
+ * `api`, reasoning metadata, token limits, and zero costs) into each model,
+ * while the source config used by a write keeps those fields implicit.
+ * Compare each authored source field against the runtime materialization so
+ * externally changed fields still fail without treating generated defaults as
+ * configuration drift.
+ */
+function sameProviderModels(
+  sourceProvider: ProviderLike,
+  sourceModels: readonly ModelDefinitionLike[],
+  runtimeProvider: ProviderLike,
+  runtimeModels: readonly ModelDefinitionLike[],
+): boolean {
+  if (sourceModels.length !== runtimeModels.length) return false;
+
+  const sourceValueMatches = (source: unknown, runtime: unknown): boolean => {
+    if (source === undefined) return true;
+    if (Array.isArray(source)) {
+      return (
+        Array.isArray(runtime) &&
+        source.length === runtime.length &&
+        source.every((entry, index) => sourceValueMatches(entry, runtime[index]))
+      );
+    }
+    if (isRecord(source)) {
+      if (!isRecord(runtime)) return false;
+      return Object.entries(source).every(
+        ([key, entry]) =>
+          entry === undefined ||
+          (Object.prototype.hasOwnProperty.call(runtime, key) &&
+            sourceValueMatches(entry, runtime[key])),
+      );
+    }
+    return Object.is(source, runtime);
+  };
+
+  const sourceShape = (provider: ProviderLike, model: ModelDefinitionLike) => {
+    const sourceModel = { ...model };
+    if (sourceModel.api !== undefined && sourceModel.api === provider.api) {
+      delete sourceModel.api;
+    }
+    if (sourceModel.baseUrl !== undefined && sourceModel.baseUrl === provider.baseUrl) {
+      delete sourceModel.baseUrl;
+    }
+    return sourceModel;
+  };
+
+  return sourceModels.every((sourceModel, index) => {
+    const runtimeModel = runtimeModels[index];
+    if (!runtimeModel || sourceModel.id !== runtimeModel.id) return false;
+    return sourceValueMatches(
+      sourceShape(sourceProvider, sourceModel),
+      sourceShape(runtimeProvider, runtimeModel),
+    );
+  });
+}
+
 function staleOverrideMatches(
   entry: SessionEntry,
   providerId: string,
@@ -678,7 +736,7 @@ export function createModelFetchOperations({
 
   async function computePlan(providerId: string): Promise<ComputedPlan> {
     const { provider, fetched, fetchedAt, config } = await fetchModelsForProvider(providerId);
-    const filter = savedFilter(providerId);
+    const filter = savedFilter(providerId, config);
     selectFetchedModels(fetched, filter);
 
     const existing = provider.models ?? [];
@@ -843,7 +901,9 @@ export function createModelFetchOperations({
       removedIds: computed.removedIds,
       protectedModels: computed.protectedModels,
       caseVariants: computed.caseVariants,
-      defaultModelRef: computed.defaultModelRef,
+      ...(computed.defaultModelRef !== undefined
+        ? { defaultModelRef: computed.defaultModelRef }
+        : {}),
       selectedIds: computed.selectedIds,
       unchangedCount: computed.unchangedCount,
       affectedSessions,
@@ -897,10 +957,12 @@ export function createModelFetchOperations({
 
         const config = draft as MutableConfig;
         const target = getProvider(config, provider);
-        if (
-          JSON.stringify(target.models ?? []) !==
-          JSON.stringify(computed.existingModels)
-        ) {
+        if (!sameProviderModels(
+          target,
+          target.models ?? [],
+          computed.provider,
+          computed.existingModels,
+        )) {
           throw new Error("Provider 配置在确认后发生变化，已取消写入。请重新预览。");
         }
         const currentFilter = normalizeFilter(
@@ -973,7 +1035,9 @@ export function createModelFetchOperations({
         );
 
         target.models = finalModels;
-        ensurePluginEntry(config, provider, computed.filter, nextTargetAgents);
+        // Applying replaces the Provider model list; it must not rewrite this
+        // plugin's saved strategy. A plugin-config write triggers a runtime
+        // reload and invalidates the session action that is still returning.
         const syncResult = syncConfiguredModelPolicyAllow(config, provider, finalModels, {
           targetAgents: nextTargetAgents,
         });

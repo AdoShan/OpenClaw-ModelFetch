@@ -418,6 +418,9 @@ describe("Control UI operations", () => {
     const preview = await operations.previewApply("openrouter");
     expect(preview.plan.removedIds).toEqual(["stale/model"]);
     expect(preview.plan.addedIds).toEqual(["openai/o3-mini"]);
+    expect(
+      Object.prototype.hasOwnProperty.call(preview.plan, "defaultModelRef"),
+    ).toBe(false);
     expect(getConfig().models?.providers?.openrouter.models?.map((row) => row.id)).toEqual([
       "openai/gpt-4o",
       "stale/model",
@@ -440,6 +443,133 @@ describe("Control UI operations", () => {
       "openai/gpt-4o",
       "openai/o3-mini",
     ]);
+  });
+
+  it("does not treat runtime-filled Provider defaults as configuration drift", async () => {
+    const stale = {
+      id: "stale/model",
+      name: "stale/model",
+      contextWindow: 32_768,
+    } as ModelDefinitionLike;
+    const kept = {
+      id: "openai/gpt-4o",
+      name: "openai/gpt-4o",
+    } as ModelDefinitionLike;
+    const { api, getConfig } = createApi(
+      baseConfig(
+        {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [kept, stale],
+          },
+        },
+        {
+          openrouter: {
+            filter: { includeRegex: "^openai/" },
+          },
+        },
+      ),
+    );
+    const currentConfig = (api.runtime.config as unknown as {
+      current: () => unknown;
+    }).current;
+    (api.runtime.config as unknown as { current: () => unknown }).current = () => {
+      const config = structuredClone(currentConfig()) as {
+        models?: {
+          providers?: Record<
+            string,
+            ProviderLike & { models?: ModelDefinitionLike[] }
+          >;
+        };
+      };
+      for (const provider of Object.values(config.models?.providers ?? {})) {
+        provider.models = (provider.models ?? []).map((entry) => ({
+          ...entry,
+          reasoning: entry.reasoning ?? false,
+          input: entry.input ?? ["text"],
+          cost: entry.cost ?? {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          contextTokens: entry.contextTokens,
+          maxTokens: entry.maxTokens ?? 8_192,
+          api: entry.api ?? provider.api,
+          provider: "openrouter",
+          compat: {},
+        }));
+      }
+      return config;
+    };
+    const fetchModels = vi.fn(async () => [
+      model("openai/gpt-4o"),
+      model("openai/o3-mini"),
+    ]);
+    const operations = createModelFetchOperations({ api, fetchModels });
+
+    const preview = await operations.previewApply("openrouter");
+    expect(preview.plan.removedIds).toEqual(["stale/model"]);
+
+    await expect(
+      operations.applyStrategy({
+        provider: "openrouter",
+        fingerprint: preview.plan.fingerprint,
+        expectedRemovals: preview.plan.removedIds,
+      }),
+    ).resolves.toMatchObject({
+      persisted: true,
+      added: 1,
+      removed: 1,
+    });
+    expect(
+      getConfig().models?.providers?.openrouter.models?.map((row) => row.id),
+    ).toEqual(["openai/gpt-4o", "openai/o3-mini"]);
+  });
+
+  it("does not rewrite the saved plugin strategy while applying models", async () => {
+    const stale = model("stale/model");
+    const kept = model("openai/gpt-4o");
+    const config = baseConfig(
+      {
+        openrouter: {
+          baseUrl: "https://openrouter.ai/api/v1",
+          api: "openai-responses",
+          models: [kept, stale],
+        },
+      },
+      {
+        openrouter: {
+          filter: { includeRegex: "^openai/" },
+          targetAgents: ["main"],
+        },
+      },
+    );
+    const { api, getConfig } = createApi(config);
+    const operations = createModelFetchOperations({
+      api,
+      fetchModels: vi.fn(async () => [kept]),
+    });
+
+    const preview = await operations.previewApply("openrouter");
+    await operations.applyStrategy({
+      provider: "openrouter",
+      fingerprint: preview.plan.fingerprint,
+      expectedRemovals: preview.plan.removedIds,
+      targetAgents: ["worker"],
+    });
+
+    expect(
+      getConfig().plugins?.entries?.["model-fetch"]?.config,
+    ).toEqual({
+      providers: {
+        openrouter: {
+          filter: { includeRegex: "^openai/" },
+          targetAgents: ["main"],
+        },
+      },
+    });
   });
 
   it("resets the current session selection when its model is removed", async () => {
