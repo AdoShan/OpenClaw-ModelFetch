@@ -506,8 +506,13 @@ describe("Model Fetch settings view", () => {
     });
   });
 
-  it("applies a confirmed deletion on the first click and closes the dialog", async () => {
+  it("applies a confirmed deletion on the first click and refreshes the page", async () => {
     const harness = createHarness();
+    const reload = vi.fn();
+    Object.defineProperty(harness.window, "location", {
+      configurable: true,
+      value: { reload },
+    });
     await mountReady(harness);
     const applyButton = harness.container.querySelector<HTMLButtonElement>(
       '[data-ref="applyButton"]',
@@ -531,6 +536,38 @@ describe("Model Fetch settings view", () => {
       expect(harness.container.querySelector('[data-ref="saveState"]')?.textContent).toBe(
         "已将 3 个模型写入 OpenRouter，新增 1，删除 1；同步 Agent：main",
       );
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not refresh the page when applying fails", async () => {
+    const harness = createHarness();
+    const reload = vi.fn();
+    Object.defineProperty(harness.window, "location", {
+      configurable: true,
+      value: { reload },
+    });
+    harness.handlers.set("strategy.apply", async () => {
+      throw new Error("apply failed");
+    });
+    await mountReady(harness);
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="applyButton"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    const dialog = harness.container.querySelector<HTMLDialogElement>(
+      '[data-ref="deleteDialog"]',
+    )!;
+    await vi.waitFor(() => expect(dialog.hasAttribute("open")).toBe(true));
+    harness.container
+      .querySelector<HTMLButtonElement>('[data-ref="confirmDelete"]')!
+      .dispatchEvent(new harness.window.Event("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(harness.container.querySelector('[data-ref="error"]')?.hasAttribute("hidden")).toBe(
+        false,
+      );
+      expect(reload).not.toHaveBeenCalled();
     });
   });
 

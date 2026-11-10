@@ -91,16 +91,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.9
+            # Model Fetch v0.2.10
 
-            This release fixes false configuration-drift errors and makes model deletion apply successfully on the first confirmation.
+            This release refreshes the Control UI after a successful strategy apply so the displayed provider and model state matches the persisted OpenClaw configuration immediately.
 
             ## Fixes
 
-            - **Runtime defaults no longer look like external edits.** Provider fields that OpenClaw fills in at runtime are accepted as derived defaults, while authored model changes still cancel the write and require a fresh preview.
-            - **Deletion confirmation writes immediately.** Applying a model replacement no longer rewrites this plugin's saved strategy, so it does not trigger a self-reload or return `PluginInstanceUnavailableError` after the configuration has already been written.
-            - **Selection uses one consistent snapshot.** Preview resolves the saved filter from the same configuration snapshot used to compute the plan.
-            - **Gateway responses stay JSON-compatible.** Preview omits `defaultModelRef` when no default model is defined.
+            - **Successful applies refresh the page.** Confirmed writes now reload the Control UI once the new configuration has been persisted, replacing stale configured counts, change indicators, and model rows with the active state.
+            - **Failure paths do not refresh.** Validation, drift, and write errors remain visible on the current page so the user can review the error and retry safely.
+            - **Deletion still completes on the first confirmation.** The refresh runs only after the replacement write succeeds; it does not require a second apply click.
 
             ## Compatibility
 
@@ -110,12 +109,12 @@ jobs:
 
             ## Verification
 
-            - `npm test` — 129 tests passed.
+            - `npm test` — 130 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
-            - A real isolated OpenClaw Gateway accepted one deletion confirmation and wrote the replacement model without a plugin reload error.
+            - A real isolated OpenClaw Gateway accepted one deletion confirmation, persisted the replacement model, and reloaded the Control UI with zero remaining changes.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.8...v0.2.9
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.9...v0.2.10
           draft: true
           generate_release_notes: false
 
@@ -132,16 +131,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            # Model Fetch v0.2.9
+            # Model Fetch v0.2.10
 
-            This release fixes false configuration-drift errors and makes model deletion apply successfully on the first confirmation.
+            This release refreshes the Control UI after a successful strategy apply so the displayed provider and model state matches the persisted OpenClaw configuration immediately.
 
             ## Fixes
 
-            - **Runtime defaults no longer look like external edits.** Provider fields that OpenClaw fills in at runtime are accepted as derived defaults, while authored model changes still cancel the write and require a fresh preview.
-            - **Deletion confirmation writes immediately.** Applying a model replacement no longer rewrites this plugin's saved strategy, so it does not trigger a self-reload or return `PluginInstanceUnavailableError` after the configuration has already been written.
-            - **Selection uses one consistent snapshot.** Preview resolves the saved filter from the same configuration snapshot used to compute the plan.
-            - **Gateway responses stay JSON-compatible.** Preview omits `defaultModelRef` when no default model is defined.
+            - **Successful applies refresh the page.** Confirmed writes now reload the Control UI once the new configuration has been persisted, replacing stale configured counts, change indicators, and model rows with the active state.
+            - **Failure paths do not refresh.** Validation, drift, and write errors remain visible on the current page so the user can review the error and retry safely.
+            - **Deletion still completes on the first confirmation.** The refresh runs only after the replacement write succeeds; it does not require a second apply click.
 
             ## Compatibility
 
@@ -151,12 +149,12 @@ jobs:
 
             ## Verification
 
-            - `npm test` — 129 tests passed.
+            - `npm test` — 130 tests passed.
             - `npm run typecheck` — passed.
             - `npm run plugin:validate` — passed.
-            - A real isolated OpenClaw Gateway accepted one deletion confirmation and wrote the replacement model without a plugin reload error.
+            - A real isolated OpenClaw Gateway accepted one deletion confirmation, persisted the replacement model, and reloaded the Control UI with zero remaining changes.
 
-            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.8...v0.2.9
+            **Full Changelog**: https://github.com/AdoShan/OpenClaw-ModelFetch/compare/v0.2.9...v0.2.10
           generate_release_notes: false
           draft: false
           make_latest: true

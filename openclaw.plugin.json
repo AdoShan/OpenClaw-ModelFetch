@@ -2,7 +2,7 @@
   "id": "model-fetch",
   "name": "Model Fetch",
   "description": "Fetch and refresh configured provider model lists into OpenClaw config with independent per-provider filters.",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "configSchema": {
     "type": "object",
     "properties": {
@@ -65,9 +65,9 @@
     "navigation"
   ],
   "controlUi": {
-    "entry": "dist/control-ui/5e7c52c3c0fc8c04a2bffdd2a1cb8ab395800f892ba686381c4918e58bbe6736/index.js",
+    "entry": "dist/control-ui/da0bba63a04b1e6c889671add02041d1452ec068e8cc9ae624aba6a5c8429f40/index.js",
     "styles": [
-      "dist/control-ui/5e7c52c3c0fc8c04a2bffdd2a1cb8ab395800f892ba686381c4918e58bbe6736/index.css"
+      "dist/control-ui/da0bba63a04b1e6c889671add02041d1452ec068e8cc9ae624aba6a5c8429f40/index.css"
     ]
   },
   "contracts": {

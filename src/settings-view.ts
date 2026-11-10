@@ -1476,6 +1476,7 @@ export function mountModelFetchSettings(
     const draft = currentDraft();
     if (!draft) return;
     applying = true;
+    let reloadAfterApply = false;
     error = "";
     render();
     try {
@@ -1522,6 +1523,7 @@ export function mountModelFetchSettings(
       } else {
         refs.deleteDialog.removeAttribute("open");
       }
+      reloadAfterApply = output.persisted;
     } catch (cause) {
       setError(messageForError(cause));
       pendingPlan = null;
@@ -1533,6 +1535,9 @@ export function mountModelFetchSettings(
     } finally {
       applying = false;
       render();
+      if (reloadAfterApply && !disposed && !context.signal.aborted) {
+        document.defaultView?.location?.reload();
+      }
     }
   }
 
