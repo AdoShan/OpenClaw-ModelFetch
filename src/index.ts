@@ -1,11 +1,10 @@
 import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
-import { registerControlUiTab } from "./control-ui-tab.js";
 import {
-  createModelFetchTool,
   MODEL_FETCH_TOOL_NAME,
   modelFetchConfigSchema,
   modelFetchParameters,
 } from "./model-fetch.js";
+import { createModelFetchTool } from "./agent-tool.js";
 import { registerModelFetchOperations } from "./operations.js";
 import type { ModelFetchConfig } from "./schemas.js";
 
@@ -31,7 +30,6 @@ const entry = defineToolPlugin({
 const registerTools = entry.register;
 entry.register = (api) => {
   registerTools?.(api);
-  registerControlUiTab(api);
   registerModelFetchOperations(api, {
     factoryConfig: api.pluginConfig as ModelFetchConfig | undefined,
   });

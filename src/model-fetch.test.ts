@@ -6,7 +6,6 @@ import {
   buildModelsEndpoint,
   collectCaseVariantRelations,
   collectModelReferenceUsages,
-  createModelFetchTool,
   fetchProviderModels,
   listConfiguredAgentEntries,
   mergeModels,
@@ -23,6 +22,8 @@ import {
   type ModelFetchToolResult,
   type ProviderLike,
 } from "./model-fetch.js";
+import { createModelFetchTool } from "./agent-tool.js";
+import type { ModelFetchSessionCleanup } from "./session-cleanup.js";
 import { ssrfPolicyFromAllowPrivateNetwork } from "openclaw/plugin-sdk/ssrf-runtime";
 import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
 
@@ -1114,7 +1115,14 @@ describe("guarded provider fetch", () => {
 });
 
 function createRuntimeMocks(config: Record<string, unknown>, models: ModelDefinitionLike[]) {
-  const mutateConfigFile = vi.fn(async () => ({ path: "/tmp/openclaw.json" }));
+  const mutateConfigFile = vi.fn(
+    async ({ mutate }: { mutate: (draft: unknown) => void }) => {
+      const draft = structuredClone(config);
+      mutate(draft);
+      Object.assign(config, draft);
+      return { path: "/tmp/openclaw.json" };
+    },
+  );
   const api = {
     config,
     runtime: {
@@ -1214,6 +1222,164 @@ describe("tool execution", () => {
       persisted: false,
       configPath: "models.providers.<providerId>.models",
     });
+  });
+
+  it("excludes reference-protected models from dry-run removal counts", async () => {
+    const config = {
+      agents: {
+        defaults: { utilityModel: "openrouter/utility-model" },
+      },
+      models: {
+        providers: {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("utility-model"), model("stale")],
+          },
+        },
+      },
+    };
+    const { mutateConfigFile, tool } = createRuntimeMocks(config, [model("fresh")]);
+
+    const result = (await tool.execute("call-protected-dry-run", {
+      provider: "openrouter",
+      dryRun: true,
+    })) as { details: ModelFetchToolResult };
+
+    expect(mutateConfigFile).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      removed: 1,
+      protectedModels: [
+        {
+          modelId: "utility-model",
+          ref: "openrouter/utility-model",
+          references: ["agents.defaults.utilityModel"],
+        },
+      ],
+    });
+  });
+
+  it("preserves a concurrent model addition when retrying a conflicted write", async () => {
+    const config = {
+      models: {
+        providers: {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("old")],
+          },
+        },
+      },
+    };
+    const { api, mutateConfigFile, fetchModels } = createRuntimeMocks(config, [model("new")]);
+    const initialToolConfig = structuredClone(config);
+    const tool = createModelFetchTool({
+      api,
+      toolContext: { runtimeConfig: initialToolConfig } as OpenClawPluginToolContext,
+      fetchModels,
+    });
+    const conflict = new Error("source changed");
+    conflict.name = "ConfigMutationConflictError";
+    let writeAttempts = 0;
+    const draftModelIds: string[][] = [];
+    mutateConfigFile.mockImplementation(async ({ mutate }) => {
+      writeAttempts += 1;
+      if (writeAttempts === 1) {
+        config.models.providers.openrouter.models.push(model("added-externally"));
+        throw conflict;
+      }
+      const draft = structuredClone(config);
+      draftModelIds.push(draft.models.providers.openrouter.models.map((row) => row.id));
+      mutate(draft);
+      Object.assign(config, draft);
+      return { path: "/tmp/openclaw.json" };
+    });
+
+    const result = (await tool.execute("call-conflict", {
+      provider: "openrouter",
+    })) as { details: ModelFetchToolResult };
+
+    expect(mutateConfigFile).toHaveBeenCalledTimes(2);
+    expect(draftModelIds).toEqual([["old", "added-externally"]]);
+    expect(config.models.providers.openrouter.models.map((row) => row.id)).toEqual([
+      "new",
+      "added-externally",
+    ]);
+    expect(result.details).toMatchObject({ added: 2, removed: 1, persisted: true });
+  });
+
+  it("migrates case-variant aliases and allowlists during tool writes", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          modelPolicy: { allow: ["magpie/auto/MiniMax-M3"] },
+          models: { "magpie/auto/MiniMax-M3": { alias: "MiniMax" } },
+        },
+      },
+      models: {
+        providers: {
+          magpie: {
+            baseUrl: "https://mapi.example/v1",
+            api: "openai-responses",
+            models: [model("auto/MiniMax-M3")],
+          },
+        },
+      },
+    };
+    const { tool } = createRuntimeMocks(config, [model("auto/minimax-m3")]);
+
+    await tool.execute("call-case-variant", { provider: "magpie" });
+
+    expect(config.models.providers.magpie.models.map((row) => row.id)).toEqual([
+      "auto/minimax-m3",
+    ]);
+    expect(config.agents.defaults.modelPolicy.allow).toEqual(["magpie/auto/minimax-m3"]);
+    expect(config.agents.defaults.models).toEqual({
+      "magpie/auto/minimax-m3": { alias: "MiniMax" },
+    });
+  });
+
+  it("cleans up stale sessions after a tool write but not during dry run", async () => {
+    const config = {
+      models: {
+        providers: {
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-responses",
+            models: [model("old")],
+          },
+        },
+      },
+    };
+    const sessionCleanup: ModelFetchSessionCleanup = {
+      affectedSessions: vi.fn(async () => []),
+      reset: vi.fn(async () => ["agent:main:test"]),
+    };
+    const { api, toolContext, mutateConfigFile, fetchModels } = createRuntimeMocks(
+      config,
+      [model("new")],
+    );
+    const toolWithCleanup = createModelFetchTool({
+      api,
+      toolContext,
+      fetchModels,
+      sessionCleanup,
+    });
+
+    await toolWithCleanup.execute("call-cleanup", { provider: "openrouter" });
+    expect(sessionCleanup.reset).toHaveBeenCalledWith({
+      providerId: "openrouter",
+      removedIds: ["old"],
+      scope: expect.any(Object),
+    });
+
+    vi.mocked(sessionCleanup.reset).mockClear();
+    await toolWithCleanup.execute("call-cleanup-dry-run", {
+      provider: "openrouter",
+      dryRun: true,
+    });
+    expect(sessionCleanup.reset).not.toHaveBeenCalled();
+    expect(mutateConfigFile).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a referenced utility model instead of deleting it", async () => {

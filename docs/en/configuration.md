@@ -160,7 +160,9 @@ The result contains:
 | `configPath` | Configuration file touched by the operation. |
 | `persisted` | Whether the result was written. |
 
-The Agent tool writes without an interactive deletion dialog. Use `dryRun: true` before a destructive call when the selection is not already reviewed in the settings UI.
+The Agent tool and settings UI share the configuration-write implementation. Retryable write conflicts re-read the final draft; reference protection, case-variant alias and allowlist migration, Agent model-entry synchronization, and stale session cleanup after writes use the same logic. `dryRun: true` neither writes configuration nor resets sessions.
+
+The Agent tool writes without an interactive deletion dialog or a settings-preview fingerprint. Use `dryRun: true` before a destructive call when the selection is not already reviewed in the settings UI.
 
 ## Provider examples
 

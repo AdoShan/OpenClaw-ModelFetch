@@ -91,7 +91,7 @@ openclaw plugins doctor
 
 ### 手机 App 里看不到 Model Fetch
 
-Android 与 iOS App 通过 Gateway hello 消息中的 `controlUiTabs` 获取插件页面。请确认手机已配对并授予 `operator.read` 权限，然后重启 App 以重新获取 hello 消息。
+Android 与 iOS App 目前不支持外部插件动态注册页面。Gateway 的 `controlUiTabs` 由 Web Control UI 消费，并不是原生移动 App 的插件页面接口，因此配对权限和重启 App 都无法让 Model Fetch 出现在原生页面列表中。请改用浏览器打开 Control UI；设置页直达地址是 `/settings/plugins/model-fetch?view=settings`。
 
 ### 获取远端模型失败
 

@@ -1,11 +1,9 @@
-import type { TSchema } from "typebox";
 import {
   fetchWithSsrFGuard,
   ssrfPolicyFromAllowPrivateNetwork,
 } from "openclaw/plugin-sdk/ssrf-runtime";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/media-runtime";
-import { jsonResult } from "openclaw/plugin-sdk/tool-results";
-import type { AnyAgentTool, OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   modelFetchConfigSchema,
   modelFetchFilterSchema,
@@ -19,7 +17,6 @@ import {
 } from "./schemas.js";
 
 export const MODEL_FETCH_TOOL_NAME = "model_fetch";
-const CONFIG_PATH = "models.providers.<providerId>.models";
 const RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_MODEL_PAGES = 100;
@@ -557,29 +554,102 @@ export function mergeModels({
   };
 }
 
-type ModelReferenceVisitor = (ref: string, path: string) => void;
+type ModelReference = {
+  path: string;
+  read: () => string | undefined;
+  write: (target: string) => boolean;
+};
+
+type ModelReferenceVisitor = (reference: ModelReference) => void;
 
 function asOptionalRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
-function readModelRefScalar(value: unknown, path: string, visit: ModelReferenceVisitor): void {
-  if (typeof value !== "string") return;
-  const ref = value.trim();
-  if (ref) visit(ref, path);
+function visitModelRefScalar(
+  container: unknown,
+  field: string,
+  path: string,
+  visit: ModelReferenceVisitor,
+): void {
+  if (!isRecord(container)) return;
+  const referencePath = `${path}.${field}`;
+  visit({
+    path: referencePath,
+    read: () => {
+      const value = container[field];
+      return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    },
+    write: (target) => {
+      if (typeof container[field] !== "string") return false;
+      container[field] = target;
+      return true;
+    },
+  });
 }
 
 /** Model settings accept either a bare `provider/model` string or `{ primary, fallbacks[] }`. */
-function readModelRefSetting(value: unknown, path: string, visit: ModelReferenceVisitor): void {
+function visitModelRefSetting(
+  container: unknown,
+  field: string,
+  basePath: string,
+  visit: ModelReferenceVisitor,
+): void {
+  if (!isRecord(container)) return;
+  const value = container[field];
+  const path = `${basePath}.${field}`;
   if (typeof value === "string") {
-    readModelRefScalar(value, path, visit);
+    visitModelRefScalar(container, field, basePath, visit);
     return;
   }
   if (!isRecord(value)) return;
-  readModelRefScalar(value.primary, `${path}.primary`, visit);
+  visitModelRefScalar(value, "primary", path, visit);
   if (!Array.isArray(value.fallbacks)) return;
-  value.fallbacks.forEach((fallback, index) => {
-    readModelRefScalar(fallback, `${path}.fallbacks[${index}]`, visit);
+  const fallbacks = value.fallbacks;
+  fallbacks.forEach((fallback, index) => {
+    if (typeof fallback !== "string") return;
+    visit({
+      path: `${path}.fallbacks[${index}]`,
+      read: () => {
+        const current = fallbacks[index];
+        return typeof current === "string" && current.trim() ? current.trim() : undefined;
+      },
+      write: (target) => {
+        if (typeof fallbacks[index] !== "string") return false;
+        fallbacks[index] = target;
+        return true;
+      },
+    });
+  });
+}
+
+function visitProviderModelReference(
+  container: unknown,
+  path: string,
+  visit: ModelReferenceVisitor,
+): void {
+  if (!isRecord(container)) return;
+  visit({
+    path,
+    read: () => {
+      const provider = typeof container.provider === "string" ? container.provider.trim() : "";
+      const model = typeof container.model === "string" ? container.model.trim() : "";
+      return provider && model ? `${provider}/${model}` : undefined;
+    },
+    write: (target) => {
+      const separator = target.indexOf("/");
+      if (
+        separator <= 0 ||
+        separator === target.length - 1 ||
+        typeof container.provider !== "string" ||
+        typeof container.model !== "string"
+      ) {
+        return false;
+      }
+      container.provider = target.slice(0, separator);
+      container.model = target.slice(separator + 1);
+      return true;
+    },
   });
 }
 
@@ -596,25 +666,20 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
   if (tools) {
     const exec = asOptionalRecord(tools.exec);
     const reviewer = asOptionalRecord(exec?.reviewer);
-    readModelRefSetting(reviewer?.model, "tools.exec.reviewer.model", visit);
+    visitModelRefSetting(reviewer, "model", "tools.exec.reviewer", visit);
 
     if (isRecord(tools.media)) {
       for (const capability of ["image", "audio", "video"] as const) {
-        readModelRefScalar(
-          asOptionalRecord(tools.media[capability])?.preferredModel,
-          `tools.media.${capability}.preferredModel`,
+        visitModelRefScalar(
+          asOptionalRecord(tools.media[capability]),
+          "preferredModel",
+          `tools.media.${capability}`,
           visit,
         );
       }
       if (Array.isArray(tools.media.models)) {
         tools.media.models.forEach((entry, index) => {
-          if (!isRecord(entry)) return;
-          const provider =
-            typeof entry.provider === "string" ? entry.provider.trim() : "";
-          const model = typeof entry.model === "string" ? entry.model.trim() : "";
-          if (provider && model) {
-            visit(`${provider}/${model}`, `tools.media.models[${index}].model`);
-          }
+          visitProviderModelReference(entry, `tools.media.models[${index}].model`, visit);
         });
       }
     }
@@ -641,18 +706,18 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
 
   const tts = asOptionalRecord(config.tts);
   if (tts) {
-    readModelRefSetting(tts.summaryModel, "tts.summaryModel", visit);
+    visitModelRefSetting(tts, "summaryModel", "tts", visit);
   }
 
   const hooks = isRecord(config.hooks) ? config.hooks : undefined;
   if (hooks) {
     if (isRecord(hooks.gmail)) {
-      readModelRefScalar(hooks.gmail.model, "hooks.gmail.model", visit);
+      visitModelRefScalar(hooks.gmail, "model", "hooks.gmail", visit);
     }
     if (Array.isArray(hooks.mappings)) {
       hooks.mappings.forEach((mapping, index) => {
         if (!isRecord(mapping)) return;
-        readModelRefScalar(mapping.model, `hooks.mappings[${index}].model`, visit);
+        visitModelRefScalar(mapping, "model", `hooks.mappings[${index}]`, visit);
       });
     }
   }
@@ -665,11 +730,7 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
         const channelMap = modelByChannel[channelId];
         if (!isRecord(channelMap)) continue;
         for (const targetId of Object.keys(channelMap).sort((left, right) => left.localeCompare(right))) {
-          readModelRefSetting(
-            channelMap[targetId],
-            `channels.modelByChannel.${channelId}.${targetId}`,
-            visit,
-          );
+          visitModelRefSetting(channelMap, targetId, `channels.modelByChannel.${channelId}`, visit);
         }
       }
     }
@@ -690,13 +751,7 @@ function forEachExplicitModelReference(config: unknown, visit: ModelReferenceVis
   }
 }
 
-/**
- * Rewrites the explicit model references that name `fromRef` to `toRef`.
- *
- * The reference collector only reads, so the walk is repeated here with a
- * writable setter. `forEachExplicitModelReference` reports the exact path of
- * every reference it finds, so the setter mirrors that path shape.
- */
+/** Rewrites references discovered by the shared read/write walker. */
 export function rewriteModelReferences(
   draft: unknown,
   fromRef: string,
@@ -708,199 +763,12 @@ export function rewriteModelReferences(
   if (!source || !target || source === target) return { changed: false, paths: [] };
 
   const changed: string[] = [];
-
-  const writeScalar = (container: unknown, field: string, basePath: string): void => {
-    if (!isRecord(container)) return;
-    const current = container[field];
-    if (typeof current !== "string" || current.trim() !== source) return;
-    container[field] = target;
-    changed.push(`${basePath}.${field}`);
-  };
-
-  const writeSetting = (container: unknown, field: string, basePath: string): void => {
-    if (!isRecord(container)) return;
-    const current = container[field];
-    if (typeof current === "string") {
-      if (current.trim() !== source) return;
-      container[field] = target;
-      changed.push(`${basePath}.${field}`);
-      return;
-    }
-    if (!isRecord(current)) return;
-    if (typeof current.primary === "string" && current.primary.trim() === source) {
-      current.primary = target;
-      changed.push(`${basePath}.${field}.primary`);
-    }
-    const fallbacks = current.fallbacks;
-    if (!Array.isArray(fallbacks)) return;
-    fallbacks.forEach((fallback, index) => {
-      if (typeof fallback !== "string" || fallback.trim() !== source) return;
-      fallbacks[index] = target;
-      changed.push(`${basePath}.${field}.fallbacks[${index}]`);
-    });
-  };
-
-  const writeProviderModel = (
-    container: unknown,
-    basePath: string,
-  ): void => {
-    if (!isRecord(container)) return;
-    const provider =
-      typeof container.provider === "string" ? container.provider.trim() : "";
-    const model = typeof container.model === "string" ? container.model.trim() : "";
-    if (!provider || !model || `${provider}/${model}` !== source) return;
-    const separator = target.indexOf("/");
-    if (separator <= 0 || separator === target.length - 1) return;
-    container.provider = target.slice(0, separator);
-    container.model = target.slice(separator + 1);
-    changed.push(`${basePath}.model`);
-  };
-
-  const tools = isRecord(draft.tools) ? draft.tools : undefined;
-  if (tools) {
-    const exec = asOptionalRecord(tools.exec);
-    const reviewer = asOptionalRecord(exec?.reviewer);
-    if (isRecord(reviewer)) writeSetting(reviewer, "model", "tools.exec.reviewer");
-
-    if (isRecord(tools.media)) {
-      for (const capability of ["image", "audio", "video"] as const) {
-        const media = asOptionalRecord(tools.media[capability]);
-        if (!media) continue;
-        writeScalar(media, "preferredModel", `tools.media.${capability}`);
-      }
-      if (Array.isArray(tools.media.models)) {
-        tools.media.models.forEach((entry, index) => {
-          if (!isRecord(entry)) return;
-          writeProviderModel(entry, `tools.media.models[${index}]`);
-        });
-      }
-    }
-  }
-
-  const agents = isRecord(draft.agents) ? draft.agents : undefined;
-  const defaults = asOptionalRecord(agents?.defaults);
-  if (defaults) rewriteAgentModelReferences(defaults, "agents.defaults", false, writeScalar, writeSetting);
-
-  if (agents && isRecord(agents.entries)) {
-    for (const agentId of Object.keys(agents.entries).sort((left, right) => left.localeCompare(right))) {
-      const entry = agents.entries[agentId];
-      if (!isRecord(entry)) continue;
-      rewriteAgentModelReferences(
-        entry,
-        `agents.entries.${agentId}`,
-        true,
-        writeScalar,
-        writeSetting,
-      );
-    }
-  } else if (agents && Array.isArray(agents.list)) {
-    agents.list.forEach((entry, index) => {
-      if (!isRecord(entry)) return;
-      rewriteAgentModelReferences(
-        entry,
-        `agents.list[${index}]`,
-        true,
-        writeScalar,
-        writeSetting,
-      );
-    });
-  }
-
-  const tts = asOptionalRecord(draft.tts);
-  if (tts) writeSetting(tts, "summaryModel", "tts");
-
-  const hooks = isRecord(draft.hooks) ? draft.hooks : undefined;
-  if (hooks) {
-    if (isRecord(hooks.gmail)) writeScalar(hooks.gmail, "model", "hooks.gmail");
-    if (Array.isArray(hooks.mappings)) {
-      hooks.mappings.forEach((mapping, index) => {
-        if (!isRecord(mapping)) return;
-        writeScalar(mapping, "model", `hooks.mappings[${index}]`);
-      });
-    }
-  }
-
-  const channels = isRecord(draft.channels) ? draft.channels : undefined;
-  if (channels) {
-    const modelByChannel = isRecord(channels.modelByChannel) ? channels.modelByChannel : undefined;
-    if (modelByChannel) {
-      for (const channelId of Object.keys(modelByChannel).sort((left, right) => left.localeCompare(right))) {
-        const channelMap = modelByChannel[channelId];
-        if (!isRecord(channelMap)) continue;
-        for (const targetId of Object.keys(channelMap).sort((left, right) => left.localeCompare(right))) {
-          writeSetting(channelMap, targetId, `channels.modelByChannel.${channelId}`);
-        }
-      }
-    }
-
-    const discord = asOptionalRecord(channels.discord);
-    if (discord) {
-      rewriteDiscordVoiceModelReferences(discord.voice, "channels.discord.voice", writeScalar, writeSetting);
-      if (isRecord(discord.accounts)) {
-        for (const accountId of Object.keys(discord.accounts).sort((left, right) => left.localeCompare(right))) {
-          rewriteDiscordVoiceModelReferences(
-            asOptionalRecord(discord.accounts[accountId])?.voice,
-            `channels.discord.accounts.${accountId}.voice`,
-            writeScalar,
-            writeSetting,
-          );
-        }
-      }
-    }
-  }
+  forEachExplicitModelReference(draft, (reference) => {
+    if (reference.read() !== source) return;
+    if (reference.write(target)) changed.push(reference.path);
+  });
 
   return { changed: changed.length > 0, paths: changed.sort((left, right) => left.localeCompare(right)) };
-}
-
-function rewriteAgentModelReferences(
-  agent: Record<string, unknown>,
-  basePath: string,
-  includeEntrySelectors: boolean,
-  writeScalar: (container: unknown, field: string, basePath: string) => void,
-  writeSetting: (container: unknown, field: string, basePath: string) => void,
-): void {
-  writeSetting(agent, "model", basePath);
-  writeScalar(agent, "utilityModel", basePath);
-  writeScalar(agent, "decisionModel", basePath);
-  writeSetting(agent, "imageModel", basePath);
-  writeSetting(agent, "voiceModel", basePath);
-  writeSetting(agent, "pdfModel", basePath);
-
-  const mediaModels = asOptionalRecord(agent.mediaModels);
-  if (mediaModels) {
-    for (const capability of ["image", "video", "music"] as const) {
-      writeSetting(mediaModels, capability, `${basePath}.mediaModels`);
-    }
-  }
-
-  const cyberFailover = asOptionalRecord(asOptionalRecord(agent.embeddedAgent)?.cyberFailover);
-  if (cyberFailover) writeSetting(cyberFailover, "model", `${basePath}.embeddedAgent.cyberFailover`);
-
-  writeSetting(asOptionalRecord(agent.heartbeat), "model", `${basePath}.heartbeat`);
-  writeSetting(asOptionalRecord(agent.subagents), "model", `${basePath}.subagents`);
-
-  const compaction = asOptionalRecord(agent.compaction);
-  if (compaction) {
-    writeSetting(compaction, "model", `${basePath}.compaction`);
-    writeSetting(asOptionalRecord(compaction.memoryFlush), "model", `${basePath}.compaction.memoryFlush`);
-  }
-
-  if (!includeEntrySelectors) return;
-  const exec = asOptionalRecord(asOptionalRecord(agent.tools)?.exec);
-  writeSetting(asOptionalRecord(exec?.reviewer), "model", `${basePath}.tools.exec.reviewer`);
-  writeSetting(asOptionalRecord(agent.tts), "summaryModel", `${basePath}.tts`);
-}
-
-function rewriteDiscordVoiceModelReferences(
-  voice: unknown,
-  basePath: string,
-  writeScalar: (container: unknown, field: string, basePath: string) => void,
-  writeSetting: (container: unknown, field: string, basePath: string) => void,
-): void {
-  const voiceConfig = asOptionalRecord(voice);
-  if (!voiceConfig) return;
-  writeSetting(voiceConfig, "model", basePath);
-  writeSetting(asOptionalRecord(voiceConfig.tts), "summaryModel", `${basePath}.tts`);
 }
 
 type ModelRefPair = { fromRef: string; toRef: string };
@@ -1050,42 +918,43 @@ function visitAgentModelReferences(
   includeEntrySelectors: boolean,
   visit: ModelReferenceVisitor,
 ): void {
-  readModelRefSetting(agent.model, `${path}.model`, visit);
-  readModelRefScalar(agent.utilityModel, `${path}.utilityModel`, visit);
-  readModelRefScalar(agent.decisionModel, `${path}.decisionModel`, visit);
-  readModelRefSetting(agent.imageModel, `${path}.imageModel`, visit);
-  readModelRefSetting(agent.voiceModel, `${path}.voiceModel`, visit);
-  readModelRefSetting(agent.pdfModel, `${path}.pdfModel`, visit);
+  visitModelRefSetting(agent, "model", path, visit);
+  visitModelRefScalar(agent, "utilityModel", path, visit);
+  visitModelRefScalar(agent, "decisionModel", path, visit);
+  visitModelRefSetting(agent, "imageModel", path, visit);
+  visitModelRefSetting(agent, "voiceModel", path, visit);
+  visitModelRefSetting(agent, "pdfModel", path, visit);
 
   const mediaModels = asOptionalRecord(agent.mediaModels);
   if (mediaModels) {
     for (const capability of ["image", "video", "music"] as const) {
-      readModelRefSetting(mediaModels[capability], `${path}.mediaModels.${capability}`, visit);
+      visitModelRefSetting(mediaModels, capability, `${path}.mediaModels`, visit);
     }
   }
 
   const cyberFailover = asOptionalRecord(asOptionalRecord(agent.embeddedAgent)?.cyberFailover);
   if (cyberFailover) {
-    readModelRefSetting(cyberFailover.model, `${path}.embeddedAgent.cyberFailover.model`, visit);
+    visitModelRefSetting(cyberFailover, "model", `${path}.embeddedAgent.cyberFailover`, visit);
   }
 
-  readModelRefSetting(asOptionalRecord(agent.heartbeat)?.model, `${path}.heartbeat.model`, visit);
-  readModelRefSetting(asOptionalRecord(agent.subagents)?.model, `${path}.subagents.model`, visit);
+  visitModelRefSetting(asOptionalRecord(agent.heartbeat), "model", `${path}.heartbeat`, visit);
+  visitModelRefSetting(asOptionalRecord(agent.subagents), "model", `${path}.subagents`, visit);
 
   const compaction = asOptionalRecord(agent.compaction);
   if (compaction) {
-    readModelRefSetting(compaction.model, `${path}.compaction.model`, visit);
-    readModelRefSetting(
-      asOptionalRecord(compaction.memoryFlush)?.model,
-      `${path}.compaction.memoryFlush.model`,
+    visitModelRefSetting(compaction, "model", `${path}.compaction`, visit);
+    visitModelRefSetting(
+      asOptionalRecord(compaction.memoryFlush),
+      "model",
+      `${path}.compaction.memoryFlush`,
       visit,
     );
   }
 
   if (!includeEntrySelectors) return;
   const exec = asOptionalRecord(asOptionalRecord(agent.tools)?.exec);
-  readModelRefSetting(asOptionalRecord(exec?.reviewer)?.model, `${path}.tools.exec.reviewer.model`, visit);
-  readModelRefSetting(asOptionalRecord(agent.tts)?.summaryModel, `${path}.tts.summaryModel`, visit);
+  visitModelRefSetting(asOptionalRecord(exec?.reviewer), "model", `${path}.tools.exec.reviewer`, visit);
+  visitModelRefSetting(asOptionalRecord(agent.tts), "summaryModel", `${path}.tts`, visit);
 }
 
 function visitDiscordVoiceModelReferences(
@@ -1095,12 +964,8 @@ function visitDiscordVoiceModelReferences(
 ): void {
   const voiceConfig = asOptionalRecord(voice);
   if (!voiceConfig) return;
-  readModelRefSetting(voiceConfig.model, `${path}.model`, visit);
-  readModelRefSetting(
-    asOptionalRecord(voiceConfig.tts)?.summaryModel,
-    `${path}.tts.summaryModel`,
-    visit,
-  );
+  visitModelRefSetting(voiceConfig, "model", path, visit);
+  visitModelRefSetting(asOptionalRecord(voiceConfig.tts), "summaryModel", `${path}.tts`, visit);
 }
 
 /**
@@ -1121,11 +986,13 @@ export function collectModelReferenceUsages(
   }
   if (targets.size === 0) return [];
 
-  forEachExplicitModelReference(config, (ref, path) => {
-    const aliases = collectModelAliases(config, agentIdForReferencePath(config, path));
+  forEachExplicitModelReference(config, (reference) => {
+    const ref = reference.read();
+    if (!ref) return;
+    const aliases = collectModelAliases(config, agentIdForReferencePath(config, reference.path));
     const usage = targets.get(ref) ?? targets.get(aliases.get(ref.toLowerCase()) ?? "");
     if (!usage) return;
-    if (!usage.references.includes(path)) usage.references.push(path);
+    if (!usage.references.includes(reference.path)) usage.references.push(reference.path);
   });
 
   const usages = [...targets.values()].filter((usage) => usage.references.length > 0);
@@ -1598,18 +1465,6 @@ export function getProvider(config: unknown, providerId: string): ProviderLike {
   return provider;
 }
 
-function currentConfig(
-  api: OpenClawPluginApi,
-  toolContext?: OpenClawPluginToolContext,
-): unknown {
-  return (
-    toolContext?.getRuntimeConfig?.() ??
-    toolContext?.runtimeConfig ??
-    toolContext?.config ??
-    api.runtime.config.current()
-  );
-}
-
 type MutableRuntimeApi = {
   runtime: {
     config: {
@@ -1641,132 +1496,4 @@ export async function resolveApiKey(
   if (!resolver) return undefined;
   const auth = await resolver({ provider: providerId, cfg: config });
   return auth.apiKey;
-}
-
-export async function runModelFetch({
-  api,
-  toolContext,
-  factoryConfig,
-  fetchModels = fetchProviderModels,
-  params,
-  signal,
-}: {
-  api: OpenClawPluginApi;
-  toolContext?: OpenClawPluginToolContext;
-  factoryConfig?: ModelFetchConfig;
-  fetchModels?: typeof fetchProviderModels;
-  params: ModelFetchParams;
-  signal?: AbortSignal;
-}): Promise<ModelFetchToolResult> {
-  const providerId = params.provider.trim();
-  if (!providerId) throw new Error("Provider id is required.");
-
-  const config = currentConfig(api, toolContext);
-  const provider = getProvider(config, providerId);
-  const persistedFilter = resolveProviderFilter(providerId, config, factoryConfig);
-  const effectiveFilter = resolveEffectiveFilter(persistedFilter, params);
-  const apiKey = await resolveApiKey(api, providerId, provider, config);
-  const fetched = await fetchModels({
-    providerId,
-    provider,
-    apiKey,
-    signal,
-  });
-  const selected = selectFetchedModels(fetched, effectiveFilter);
-  const existing = provider.models ?? [];
-  const merge = mergeModels({
-    existing,
-    selected,
-    filter: effectiveFilter,
-  });
-  let protection = applyModelReferenceProtection({
-    existing,
-    merged: merge.models,
-    providerId,
-    config,
-  });
-
-  let persisted = false;
-  let configPath = CONFIG_PATH;
-  let removed = Math.max(0, merge.removed - protection.protectedModels.length);
-  if (!params.dryRun) {
-    const runtime = (api as unknown as MutableRuntimeApi).runtime;
-    const result = await runtime.config.mutateConfigFile({
-      base: "source",
-      afterWrite: { mode: "auto" },
-      mutate: (draft) => {
-        const cfg = draft as ConfigLike;
-        cfg.models ??= {};
-        cfg.models.providers ??= {};
-        const target = cfg.models.providers[providerId] ?? { ...provider };
-        const latestExisting = target.models ?? [];
-        protection = applyModelReferenceProtection({
-          existing: latestExisting,
-          merged: merge.models,
-          providerId,
-          config: cfg,
-        });
-        const finalIds = new Set(protection.models.map((model) => model.id));
-        removed = latestExisting.filter((model) => !finalIds.has(model.id)).length;
-        target.models = protection.models;
-        cfg.models.providers[providerId] = target;
-        const targetAgents = resolveProviderTargetAgents(providerId, cfg, factoryConfig);
-        const syncResult = syncConfiguredModelPolicyAllow(cfg, providerId, protection.models, {
-          targetAgents,
-        });
-        syncAgentModelEntries(cfg, providerId, protection.models, {
-          targetAgents: syncResult.syncedAgents,
-        });
-      },
-    });
-    configPath = result.path;
-    persisted = true;
-  }
-
-  return {
-    provider: providerId,
-    fetched: fetched.length,
-    selected: merge.selectedIds,
-    protectedModels: protection.protectedModels,
-    added: merge.added,
-    unchanged: merge.unchanged,
-    removed,
-    replace: effectiveFilter.replace === true,
-    dryRun: params.dryRun === true,
-    configPath,
-    persisted,
-  };
-}
-
-export function createModelFetchTool({
-  api,
-  toolContext,
-  factoryConfig,
-  fetchModels = fetchProviderModels,
-}: {
-  api: OpenClawPluginApi;
-  toolContext: OpenClawPluginToolContext;
-  factoryConfig?: ModelFetchConfig;
-  fetchModels?: typeof fetchProviderModels;
-}): AnyAgentTool {
-  return {
-    name: MODEL_FETCH_TOOL_NAME,
-    label: "Fetch Provider Models",
-    description:
-      "Fetch a configured provider's model list, apply that provider's independent regex/manual selection strategy, and persist the selected models to OpenClaw config for WebUI use.",
-    parameters: modelFetchParameters as TSchema,
-    resultContentSource: "network",
-    execute: async (_toolCallId, params: ModelFetchParams, signal?: AbortSignal) => {
-      return jsonResult(
-        await runModelFetch({
-          api,
-          toolContext,
-          factoryConfig,
-          fetchModels,
-          params,
-          signal,
-        }),
-      );
-    },
-  };
 }

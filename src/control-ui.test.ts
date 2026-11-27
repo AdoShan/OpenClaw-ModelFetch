@@ -4,11 +4,6 @@ import plugin, {
   PIN_MIGRATION_STORAGE_KEY,
   restoreSidebarPin,
 } from "./control-ui.js";
-import {
-  CONTROL_UI_TAB_ID,
-  controlUiTabDescriptor,
-  registerControlUiTab,
-} from "./control-ui-tab.js";
 
 function createStorage(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
@@ -129,32 +124,5 @@ describe("Model Fetch Control UI plugin", () => {
     const harness = createHost({ canPin: false });
     expect(() => restoreSidebarPin(harness.host)).not.toThrow();
     expect(harness.pinNavigation).not.toHaveBeenCalled();
-  });
-});
-
-describe("Model Fetch Control UI tab descriptor", () => {
-  it("advertises a tab so dashboard clients can discover the plugin", () => {
-    const register = vi.fn();
-    const api = { session: { controls: { registerControlUiDescriptor: register } } };
-
-    expect(registerControlUiTab(api as never)).toBe(true);
-    expect(register).toHaveBeenCalledTimes(1);
-    expect(register).toHaveBeenCalledWith(controlUiTabDescriptor);
-    expect(controlUiTabDescriptor.surface).toBe("tab");
-    expect(controlUiTabDescriptor.id).toBe(CONTROL_UI_TAB_ID);
-    expect(controlUiTabDescriptor.requiredScopes).toEqual(["operator.read"]);
-  });
-
-  it("falls back to the deprecated flat registrar on older hosts", () => {
-    const register = vi.fn();
-    const api = { session: {}, registerControlUiDescriptor: register };
-
-    expect(registerControlUiTab(api as never)).toBe(true);
-    expect(register).toHaveBeenCalledWith(controlUiTabDescriptor);
-  });
-
-  it("skips registration when the host supports neither registrar", () => {
-    const api = { session: {} };
-    expect(registerControlUiTab(api as never)).toBe(false);
   });
 });

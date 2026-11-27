@@ -91,7 +91,7 @@ After an OpenClaw upgrade, the first activation restores Model Fetch as a pinned
 
 ### Model Fetch does not show up in the mobile apps
 
-The Android and iOS apps learn about plugin pages from the `controlUiTabs` payload in the Gateway hello message. Make sure the phone is paired with the `operator.read` scope, then restart the app so it fetches a fresh hello message.
+The Android and iOS apps do not currently support dynamic page registration for external plugins. The `controlUiTabs` Gateway payload is consumed by the web Control UI, not exposed as a native mobile plugin-page API. Pairing scopes and app restarts cannot add a Model Fetch entry to the native apps. Use the Control UI in a browser instead; the direct settings route is `/settings/plugins/model-fetch?view=settings`.
 
 ### Fetching remote models fails
 

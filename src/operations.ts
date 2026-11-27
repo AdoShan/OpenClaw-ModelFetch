@@ -5,8 +5,6 @@ import type {
   PluginJsonValue,
   PluginSessionActionContext,
 } from "openclaw/plugin-sdk/core";
-import * as sessionStoreRuntime from "openclaw/plugin-sdk/session-store-runtime";
-import type { SessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { modelFetchContract } from "./contract.js";
 import {
   applyModelReferenceProtection,
@@ -16,13 +14,10 @@ import {
   getProvider,
   listConfiguredAgentEntries,
   mergeModels,
-  migrateModelRefEntries,
   resolveDefaultModelRef,
   resolveApiKey,
   resolveProviderFilter,
   resolveProviderTargetAgents,
-  rewriteModelReferences,
-  runModelFetch,
   selectFetchedModels,
   syncAgentModelEntries,
   syncConfiguredModelPolicyAllow,
@@ -31,8 +26,18 @@ import {
   type ModelFilterConfig,
   type ProviderLike,
 } from "./model-fetch.js";
+import { runModelFetch } from "./agent-tool.js";
+import {
+  mutateConfigFileWithRetry,
+  replaceProviderModels,
+  sameProviderModels,
+} from "./model-replacement.js";
+import {
+  createModelFetchSessionCleanup,
+  type SessionSelectionScope,
+  type SessionStoreRuntime,
+} from "./session-cleanup.js";
 import type {
-  AffectedSession,
   ApplyPlan,
   AgentSummary,
   ApplyStrategyInput,
@@ -90,84 +95,6 @@ type ComputedPlan = {
   existingModels: ModelDefinitionLike[];
   mergedModels: ModelDefinitionLike[];
 };
-
-/**
- * The host exposes a single-attempt config mutation to plugins, so a write
- * that loses the race against another writer (for example an OpenClaw upgrade
- * rewriting the config file) fails outright. The host's own config writer
- * retries these conflicts, so mirror that behaviour here.
- */
-const CONFIG_MUTATION_MAX_ATTEMPTS = 5;
-
-function isRetryableConfigConflict(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (error.name !== "ConfigMutationConflictError") return false;
-  return (error as { retryable?: unknown }).retryable !== false;
-}
-
-async function mutateConfigFileWithRetry(
-  runtime: OpenClawPluginApi["runtime"],
-  params: Parameters<
-    OpenClawPluginApi["runtime"]["config"]["mutateConfigFile"]
-  >[0],
-): Promise<
-  Awaited<
-    ReturnType<OpenClawPluginApi["runtime"]["config"]["mutateConfigFile"]>
-  >
-> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < CONFIG_MUTATION_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      return await runtime.config.mutateConfigFile(params);
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableConfigConflict(error)) throw error;
-    }
-  }
-  throw lastError;
-}
-
-type SessionSelectionScope = {
-  sessionKey?: string;
-  agentId?: string;
-};
-
-type SessionStoreRuntime = {
-  getSessionEntryAsync: typeof getSessionEntryAsync;
-  patchSessionEntry: typeof patchSessionEntry;
-  listSessionEntries: (
-    params: Parameters<typeof sessionStoreRuntime.listSessionEntries>[0],
-  ) =>
-    | ReturnType<typeof sessionStoreRuntime.listSessionEntries>
-    | ReturnType<typeof sessionStoreRuntime.listSessionEntriesAsync>;
-};
-
-type SessionEntryCandidate = {
-  sessionKey: string;
-  agentId: string;
-  entry: SessionEntry;
-};
-
-type SessionResetTarget = {
-  sessionKey: string;
-  agentId: string;
-};
-
-const AFFECTED_SESSION_LIMIT = 2_000;
-const DEFAULT_AGENT_ID = "main";
-const getSessionEntryAsync = sessionStoreRuntime.getSessionEntryAsync;
-const patchSessionEntry = sessionStoreRuntime.patchSessionEntry;
-
-async function listSessionEntriesCompat(
-  params: Parameters<typeof sessionStoreRuntime.listSessionEntries>[0],
-): ReturnType<typeof sessionStoreRuntime.listSessionEntriesAsync> {
-  if (typeof sessionStoreRuntime.listSessionEntriesAsync === "function") {
-    return sessionStoreRuntime.listSessionEntriesAsync({
-      agentId: params?.agentId ?? DEFAULT_AGENT_ID,
-    });
-  }
-  return sessionStoreRuntime.listSessionEntries(params);
-}
 
 export type ModelFetchOperations = ReturnType<typeof createModelFetchOperations>;
 
@@ -339,166 +266,6 @@ function sameStringSets(left: readonly string[], right: readonly string[]): bool
   );
 }
 
-/**
- * Runtime config resolution fills Provider-level model defaults (notably
- * `api`, reasoning metadata, token limits, and zero costs) into each model,
- * while the source config used by a write keeps those fields implicit.
- * Compare each authored source field against the runtime materialization so
- * externally changed fields still fail without treating generated defaults as
- * configuration drift.
- */
-function sameProviderModels(
-  sourceProvider: ProviderLike,
-  sourceModels: readonly ModelDefinitionLike[],
-  runtimeProvider: ProviderLike,
-  runtimeModels: readonly ModelDefinitionLike[],
-): boolean {
-  if (sourceModels.length !== runtimeModels.length) return false;
-
-  const sourceValueMatches = (source: unknown, runtime: unknown): boolean => {
-    if (source === undefined) return true;
-    if (Array.isArray(source)) {
-      return (
-        Array.isArray(runtime) &&
-        source.length === runtime.length &&
-        source.every((entry, index) => sourceValueMatches(entry, runtime[index]))
-      );
-    }
-    if (isRecord(source)) {
-      if (!isRecord(runtime)) return false;
-      return Object.entries(source).every(
-        ([key, entry]) =>
-          entry === undefined ||
-          (Object.prototype.hasOwnProperty.call(runtime, key) &&
-            sourceValueMatches(entry, runtime[key])),
-      );
-    }
-    return Object.is(source, runtime);
-  };
-
-  const sourceShape = (provider: ProviderLike, model: ModelDefinitionLike) => {
-    const sourceModel = { ...model };
-    if (sourceModel.api !== undefined && sourceModel.api === provider.api) {
-      delete sourceModel.api;
-    }
-    if (sourceModel.baseUrl !== undefined && sourceModel.baseUrl === provider.baseUrl) {
-      delete sourceModel.baseUrl;
-    }
-    return sourceModel;
-  };
-
-  return sourceModels.every((sourceModel, index) => {
-    const runtimeModel = runtimeModels[index];
-    if (!runtimeModel || sourceModel.id !== runtimeModel.id) return false;
-    return sourceValueMatches(
-      sourceShape(sourceProvider, sourceModel),
-      sourceShape(runtimeProvider, runtimeModel),
-    );
-  });
-}
-
-function staleOverrideMatches(
-  entry: SessionEntry,
-  providerId: string,
-  removedIds: readonly string[],
-): boolean {
-  if (entry.providerOverride) {
-    return entry.providerOverride === providerId && removedIds.includes(entry.modelOverride ?? "");
-  }
-  if (entry.modelOverride) {
-    return removedIds.some((modelId) => entry.modelOverride === `${providerId}/${modelId}`);
-  }
-  return entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
-}
-
-/**
- * Session keys are stored as `agent:<agentId>:<rest>`. The agent id prefix is
- * case insensitive, and only the leading ownership segment is parsed.
- */
-function parseAgentIdFromSessionKey(sessionKey: string): string | undefined {
-  const raw = sessionKey?.trim() ?? "";
-  if (raw.length < 7 || raw.slice(0, 6).toLowerCase() !== "agent:") return undefined;
-  const separator = raw.indexOf(":", 6);
-  if (separator === -1) return undefined;
-  const agentId = raw.slice(6, separator).trim();
-  const rest = raw.slice(separator + 1);
-  if (!agentId || !rest || rest.startsWith(":")) return undefined;
-  return agentId;
-}
-
-/**
- * The cleared fields of one stale session selection. A session that only kept
- * the runtime model also loses its runtime context bookkeeping.
- */
-function staleSelectionResetUpdate(
-  entry: SessionEntry,
-  providerId: string,
-  removedIds: readonly string[],
-): Partial<SessionEntry> {
-  const runtimeModelMatches =
-    entry.modelProvider === providerId && removedIds.includes(entry.model ?? "");
-  return {
-    providerOverride: undefined,
-    modelOverride: undefined,
-    modelOverrideSource: undefined,
-    modelOverrideRouteResolution: undefined,
-    modelOverrideFallbackOriginProvider: undefined,
-    modelOverrideFallbackOriginModel: undefined,
-    ...(runtimeModelMatches
-      ? {
-          model: undefined,
-          modelProvider: undefined,
-          contextTokens: undefined,
-          contextTokensSource: undefined,
-          contextBudgetStatus: undefined,
-        }
-      : {}),
-  };
-}
-
-/**
- * Clears the stale selection of every listed session. Each session is read
- * again right before it is patched so a lock taken after the preview is
- * honoured, and one failing session never stops the remaining ones.
- */
-async function resetStaleSessionSelections({
-  candidates,
-  providerId,
-  removedIds,
-  sessionStore,
-}: {
-  candidates: readonly SessionResetTarget[];
-  providerId: string;
-  removedIds: readonly string[];
-  sessionStore: SessionStoreRuntime;
-}): Promise<string[]> {
-  const resetSessionKeys: string[] = [];
-  if (removedIds.length === 0) return resetSessionKeys;
-
-  for (const candidate of candidates) {
-    try {
-      const latest = await sessionStore.getSessionEntryAsync({
-        sessionKey: candidate.sessionKey,
-        agentId: candidate.agentId,
-      });
-      if (!latest || latest.modelSelectionLocked === true) continue;
-      if (!staleOverrideMatches(latest, providerId, removedIds)) continue;
-
-      const updated = await sessionStore.patchSessionEntry({
-        sessionKey: candidate.sessionKey,
-        agentId: candidate.agentId,
-        preserveActivity: true,
-        update: () => staleSelectionResetUpdate(latest, providerId, removedIds),
-      });
-      if (updated) resetSessionKeys.push(candidate.sessionKey);
-    } catch {
-      // A single failing session must not abort the remaining cleanups.
-    }
-  }
-
-  return resetSessionKeys;
-}
-
 function ensurePluginEntry(
   draft: MutableConfig,
   providerId: string,
@@ -529,19 +296,19 @@ export function createModelFetchOperations({
   factoryConfig,
   fetchModels = fetchProviderModels,
   now = () => new Date(),
-  sessionStore = {
-    getSessionEntryAsync,
-    patchSessionEntry,
-    listSessionEntries: listSessionEntriesCompat,
-  },
+  sessionStore,
 }: {
   api: OpenClawPluginApi;
   factoryConfig?: ModelFetchConfig;
   fetchModels?: typeof fetchProviderModels;
   now?: () => Date;
-  sessionStore?: SessionStoreRuntime;
+  sessionStore?: Partial<SessionStoreRuntime>;
 }) {
   const runtime = api.runtime;
+  const sessionCleanup = createModelFetchSessionCleanup({
+    currentConfig: () => runtime.config.current(),
+    sessionStore,
+  });
 
   function currentConfig(): unknown {
     return runtime.config.current();
@@ -553,145 +320,6 @@ export function createModelFetchOperations({
 
   function savedTargetAgents(providerId: string, config = currentConfig()): string[] {
     return normalizeTargetAgents(resolveProviderTargetAgents(providerId, config, factoryConfig));
-  }
-
-  function configuredAgentIds(config = currentConfig()): string[] {
-    return listConfiguredAgentEntries(config).map(({ id }) => id);
-  }
-
-  /**
-   * Lists the sessions of every candidate agent. `listSessionEntries` is
-   * agent scoped, so agents discovered inside the returned session keys are
-   * scanned as well.
-   */
-  async function collectSessionEntries(
-    agentIds: readonly string[],
-  ): Promise<SessionEntryCandidate[]> {
-    const candidates: SessionEntryCandidate[] = [];
-    const visited = new Set<string>();
-    const queue = [...agentIds];
-
-    while (queue.length > 0) {
-      const agentId = (queue.shift() ?? "").trim();
-      if (!agentId) continue;
-      const normalized = agentId.toLowerCase();
-      if (visited.has(normalized)) continue;
-      visited.add(normalized);
-
-      let summaries: Awaited<ReturnType<SessionStoreRuntime["listSessionEntries"]>> = [];
-      try {
-        summaries = await sessionStore.listSessionEntries({
-          agentId,
-          readOnly: true,
-        });
-      } catch {
-        // One unreadable agent store must not stop the remaining ones.
-        continue;
-      }
-
-      for (const summary of summaries ?? []) {
-        const sessionKey = summary?.sessionKey;
-        if (!sessionKey) continue;
-        const parsedAgentId = parseAgentIdFromSessionKey(sessionKey);
-        candidates.push({
-          sessionKey,
-          agentId: parsedAgentId ?? agentId,
-          entry: summary.entry,
-        });
-        if (parsedAgentId && !visited.has(parsedAgentId.toLowerCase())) {
-          queue.push(parsedAgentId);
-        }
-      }
-    }
-
-    return candidates;
-  }
-
-  /**
-   * Sessions whose persisted model selection points at a model that the plan
-   * removes. Locked sessions are never reported as affected.
-   */
-  function collectAffectedSessions(
-    candidates: readonly SessionEntryCandidate[],
-    providerId: string,
-    removedIds: readonly string[],
-  ): AffectedSession[] {
-    const affected: AffectedSession[] = [];
-    const seen = new Set<string>();
-
-    for (const candidate of candidates) {
-      if (affected.length >= AFFECTED_SESSION_LIMIT) break;
-      const entry = candidate.entry;
-      if (!entry) continue;
-      if (entry.modelSelectionLocked === true) continue;
-      if (!staleOverrideMatches(entry, providerId, removedIds)) continue;
-
-      const dedupeKey = `${candidate.agentId.toLowerCase()}::${candidate.sessionKey}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      affected.push({
-        sessionKey: candidate.sessionKey,
-        agentId: candidate.agentId,
-        label: entry.label || entry.displayName || candidate.sessionKey,
-      });
-    }
-
-    return affected;
-  }
-
-  /**
-   * Every session across the known agents whose selection becomes stale.
-   * `main` is always scanned, the calling agent is added when known, and
-   * agents are additionally derived from the session keys themselves.
-   */
-  async function affectedSessionsFor({
-    providerId,
-    removedIds,
-    scope,
-  }: {
-    providerId: string;
-    removedIds: readonly string[];
-    scope: SessionSelectionScope;
-  }): Promise<AffectedSession[]> {
-    if (removedIds.length === 0) return [];
-
-    const agentIds = new Set<string>([DEFAULT_AGENT_ID]);
-    const scopeAgentId = scope.agentId?.trim();
-    if (scopeAgentId) agentIds.add(scopeAgentId);
-    const scopedKeyAgentId = scope.sessionKey
-      ? parseAgentIdFromSessionKey(scope.sessionKey)
-      : undefined;
-    if (scopedKeyAgentId) agentIds.add(scopedKeyAgentId);
-    for (const agentId of configuredAgentIds()) agentIds.add(agentId);
-
-    const candidates = await collectSessionEntries([...agentIds]);
-
-    const scopedSessionKey = scope.sessionKey?.trim();
-    const scopedOwnerId = scopeAgentId ?? scopedKeyAgentId;
-    if (scopedSessionKey && scopedOwnerId) {
-      const known = candidates.some(
-        (candidate) => candidate.sessionKey === scopedSessionKey,
-      );
-      if (!known) {
-        try {
-          const entry = await sessionStore.getSessionEntryAsync({
-            sessionKey: scopedSessionKey,
-            agentId: scopedOwnerId,
-          });
-          if (entry) {
-            candidates.push({
-              sessionKey: scopedSessionKey,
-              agentId: scopedOwnerId,
-              entry,
-            });
-          }
-        } catch {
-          // The scoped session is optional; ignore unreadable entries.
-        }
-      }
-    }
-
-    return collectAffectedSessions(candidates, providerId, removedIds);
   }
 
   /**
@@ -888,11 +516,11 @@ export function createModelFetchOperations({
     scope: SessionSelectionScope = {},
   ): Promise<PreviewApplyOutput> {
     const computed = await computePlan(provider);
-    const affectedSessions = await affectedSessionsFor({
-      providerId: provider,
-      removedIds: computed.removedIds,
+    const affectedSessions = await sessionCleanup.affectedSessions(
+      provider,
+      computed.removedIds,
       scope,
-    });
+    );
     const plan: ApplyPlan = {
       fingerprint: computed.fingerprint,
       fetchedAt: computed.fetchedAt,
@@ -942,7 +570,7 @@ export function createModelFetchOperations({
       targetAgents ?? savedTargetAgents(provider),
     );
     let syncedAgents: string[] = [];
-    const rewrittenReferences: string[] = [];
+    let rewrittenReferences: string[] = [];
     let removedIds = computed.removedIds;
     let finalProtectedModels = computed.protectedModels;
 
@@ -975,94 +603,28 @@ export function createModelFetchOperations({
           throw new Error("模型引用在确认后发生变化，已取消写入。请重新预览。");
         }
 
-        for (const rewrite of rewrites) {
-          const result = rewriteModelReferences(
-            config,
-            rewrite.fromRef,
-            rewrite.toRef,
-          );
-          if (result.changed) rewrittenReferences.push(...result.paths);
-        }
-
-        // `agents.*.models` (which carries `alias`) and `modelPolicy.allow`
-        // are keyed by model reference but are not model references, so the
-        // walker above leaves them alone. A case-only rename has to move them
-        // to the surviving spelling; otherwise the alias and the allowlist
-        // entry are dropped along with the stale id.
-        // Explicit reference rewrites can change an alias definition used by
-        // any agent, so those entries are migrated across the full roster.
-        const rewriteEntryMigration = migrateModelRefEntries(
-          config,
-          rewrites.map((rewrite) => ({
-            fromRef: rewrite.fromRef,
-            toRef: rewrite.toRef,
-          })),
-          { onAliasConflict: "error" },
-        );
-        if (rewriteEntryMigration.changed) {
-          rewrittenReferences.push(...rewriteEntryMigration.paths);
-        }
-
-        const caseEntryMigration = migrateModelRefEntries(
-          config,
-          computed.caseVariants.map((variant) => ({
-            fromRef: `${provider}/${variant.removedId}`,
-            toRef: `${provider}/${variant.survivingModelId}`,
-          })),
-          { targetAgents: nextTargetAgents },
-        );
-        if (caseEntryMigration.changed) {
-          rewrittenReferences.push(...caseEntryMigration.paths);
-        }
-
-        // The rewrites may have released the references that kept a model in
-        // the list, so the final list is recomputed against the rewritten
-        // draft instead of reusing the previewed one.
-        const finalModels = rewrites.length > 0
-          ? applyModelReferenceProtection({
-              existing: computed.existingModels,
-              merged: computed.mergedModels,
-              providerId: provider,
-              config,
-            }).models
-          : computed.finalModels;
-        const finalIds = new Set(finalModels.map((model) => model.id));
-        removedIds = computed.existingIds.filter((id) => !finalIds.has(id));
-        finalProtectedModels = collectModelReferenceUsages(
-          config,
-          provider,
-          computed.protectedModels.map((entry) => entry.modelId),
-        );
-
-        target.models = finalModels;
-        // Applying replaces the Provider model list; it must not rewrite this
-        // plugin's saved strategy. A plugin-config write triggers a runtime
-        // reload and invalidates the session action that is still returning.
-        const syncResult = syncConfiguredModelPolicyAllow(config, provider, finalModels, {
+        const replacement = replaceProviderModels(config, {
+          providerId: provider,
+          provider: computed.provider,
+          existingModels: computed.existingModels,
+          mergedModels: computed.mergedModels,
+          rewrites,
+          caseVariants: computed.caseVariants,
           targetAgents: nextTargetAgents,
         });
-        syncedAgents = syncResult.syncedAgents;
-        syncAgentModelEntries(config, provider, finalModels, {
-          targetAgents: syncedAgents,
-        });
+        removedIds = replacement.removedIds;
+        finalProtectedModels = replacement.protectedModels;
+        rewrittenReferences = replacement.rewrittenReferences;
+        syncedAgents = replacement.syncedAgents;
       },
     });
 
     // The session list is re-read after the write so the cleanup sees the
     // latest state and honours locks taken since the preview.
-    const affectedSessions = await affectedSessionsFor({
+    const resetSessionKeys = await sessionCleanup.reset({
       providerId: provider,
       removedIds,
       scope,
-    });
-    const resetSessionKeys = await resetStaleSessionSelections({
-      candidates: affectedSessions.map((session) => ({
-        sessionKey: session.sessionKey,
-        agentId: session.agentId,
-      })),
-      providerId: provider,
-      removedIds,
-      sessionStore,
     });
 
     return {
@@ -1076,9 +638,7 @@ export function createModelFetchOperations({
       removed: removedIds.length,
       selectedIds: computed.selectedIds,
       protectedModels: finalProtectedModels,
-      rewrittenReferences: [...new Set(rewrittenReferences)].sort((left, right) =>
-        left.localeCompare(right),
-      ),
+      rewrittenReferences,
       targetAgents: nextTargetAgents,
       syncedAgents,
       sessionSelectionResets: resetSessionKeys.length,
@@ -1093,6 +653,7 @@ export function createModelFetchOperations({
       factoryConfig,
       fetchModels,
       params,
+      sessionCleanup,
     });
   }
 

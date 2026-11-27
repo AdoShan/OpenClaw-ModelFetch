@@ -847,11 +847,9 @@ describe("Control UI operations", () => {
     ]);
     expect(sessionStore.listSessionEntries).toHaveBeenCalledWith({
       agentId: "main",
-      readOnly: true,
     });
     expect(sessionStore.listSessionEntries).toHaveBeenCalledWith({
       agentId: "scout",
-      readOnly: true,
     });
 
     const applied = await operations.applyStrategy({
